@@ -6,13 +6,15 @@
 
 .AUTHOR Joao Paulo Costa
 
+.DESCRIPTION Azure Health Check HTML report for governance, compute, storage, network and Key Vault.
+
 .COMPANYNAME getpractical.co.uk
 
 .COPYRIGHT
 
 .TAGS
     getpractical
-    Microsoft Azure
+    Azure HealthCheck Governance Report HTML Cloud Security
 
 .LICENSEURI
     https://github.com/jpsantoscosta/Azure-HealthCheck/blob/main/LICENSE 
