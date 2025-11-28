@@ -1,4 +1,20 @@
-﻿<#
+<#PSScriptInfo
+
+.VERSION 1.0.0
+.GUID 4129a3f4-6bb2-4dea-9d84-895d5dd2d3b7
+.AUTHOR Joao Paulo Costa
+.COMPANYNAME Get Practical
+.COPYRIGHT (c) 2025 Joao Paulo Costa. All rights reserved.
+.TAGS Azure HealthCheck Governance Report HTML Cloud Security
+.LICENSEURI https://github.com/jpsantoscosta/Azure-HealthCheck/blob/main/LICENSE
+.PROJECTURI https://github.com/jpsantoscosta/Azure-HealthCheck
+.RELEASENOTES Initial public release of Invoke-AzHealthCheck.
+#>
+
+<#
+ 
+ 
+ <#
 .SYNOPSIS
  Azure Health Check – governance, compute and storage overview, HTML report.
 
