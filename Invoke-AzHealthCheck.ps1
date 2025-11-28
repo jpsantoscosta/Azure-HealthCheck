@@ -1,12 +1,12 @@
 <#PSScriptInfo
 
-.VERSION 1.0.1
+.VERSION 1.0.2
 
 .GUID 4129a3f4-6bb2-4dea-9d84-895d5dd2d3b7
 
 .AUTHOR Joao Paulo Costa
 
-.DESCRIPTION Azure Health Check HTML report for governance, compute, storage, network and Key Vault.
+.DESCRIPTION This script generates a Azure Health Check HTML report for governance, compute, storage, network and Key Vault.
 
 .COMPANYNAME getpractical.co.uk
 
@@ -26,16 +26,10 @@
 
 .RELEASENOTES
     v1.0.0 - Initial release
+    v1.0.1 - Fix the broken lines (ASCII)
+    v1.0.2 - Update HTML entity for no rows message
 #>
  
- <#
-.SYNOPSIS
- Azure Health Check – governance, compute and storage overview, HTML report.
-
-.NOTES
- Author: Joao Paulo Costa (getpractical.co.uk)
-#>
-
 [CmdletBinding()]
 param(
     [switch]$OpenAfterExport
