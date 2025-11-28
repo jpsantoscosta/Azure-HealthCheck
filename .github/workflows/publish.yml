@@ -25,6 +25,6 @@ jobs:
           NUGET_API_KEY: ${{ secrets.PSGALLERY_API_KEY }}
         run: |
           Publish-Script `
-            -Path ./Azure-HealthCheck.ps1 `
+            -Path ./Invoke-AzHealthCheck.ps1 `
             -NuGetApiKey $env:NUGET_API_KEY `
             -Repository PSGallery
