@@ -1,6 +1,6 @@
 <#PSScriptInfo
 
-.VERSION 1.0.2
+.VERSION 1.0.3
 
 .GUID 4129a3f4-6bb2-4dea-9d84-895d5dd2d3b7
 
@@ -28,6 +28,7 @@
     v1.0.0 - Initial release
     v1.0.1 - Fix the broken lines (ASCII)
     v1.0.2 - Update HTML entity for no rows message
+    v1.0.3 - Fix formatting and punctuation in health check report
 #>
  
 [CmdletBinding()]
@@ -1164,7 +1165,7 @@ $header = @"
   <div class="header-title">Azure Health Check</div>
   <div class="header-sub">Environment overview for governance, compute, storage, network and Key Vault</div>
   <div class="header-sub">
-    Author: Joao Paulo Costa –
+    Author: Joao Paulo Costa -
     <a href='https://getpractical.co.uk' target='_blank' rel='noopener noreferrer'>getpractical.co.uk</a> ·
     <a href='https://www.linkedin.com/in/jpsantoscosta' target='_blank' rel='noopener noreferrer'>LinkedIn</a>
   </div>
@@ -1189,12 +1190,12 @@ $header = @"
     reviews.
   </div>
   <ul class="about-list">
-    <li><strong>Governance</strong> – Resource groups without management locks, increasing the risk of accidental deletion or change.</li>
-    <li><strong>Backup</strong> – Azure VMs that do not appear to be protected by Azure Backup.</li>
-    <li><strong>Compute hygiene</strong> – VMs using legacy disk types (HDD / unmanaged).</li>
-    <li><strong>Storage</strong> – Storage accounts with TLS &lt; 1.2, public blob access enabled, or soft delete / recovery not clearly configured.</li>
-    <li><strong>Network</strong> – Subnets and NICs without NSG protection, and NSG rules exposing RDP (3389) or SSH (22) from the Internet.</li>
-    <li><strong>Key Vault</strong> – Key Vaults without purge protection and secrets / keys / certificates expiring soon and requiring review.</li>
+    <li><strong>Governance</strong> - Resource groups without management locks, increasing the risk of accidental deletion or change.</li>
+    <li><strong>Backup</strong> - Azure VMs that do not appear to be protected by Azure Backup.</li>
+    <li><strong>Compute hygiene</strong> - VMs using legacy disk types (HDD / unmanaged).</li>
+    <li><strong>Storage</strong> - Storage accounts with TLS &lt; 1.2, public blob access enabled, or soft delete / recovery not clearly configured.</li>
+    <li><strong>Network</strong> - Subnets and NICs without NSG protection, and NSG rules exposing RDP (3389) or SSH (22) from the Internet.</li>
+    <li><strong>Key Vault</strong> - Key Vaults without purge protection and secrets / keys / certificates expiring soon and requiring review.</li>
   </ul>
 </div>
 "@)
@@ -1358,17 +1359,17 @@ foreach ($sub in $subscriptions) {
         SoftDelete,
         PurgeProtection
 
-    $govHtml          = New-TableHtml -Data $govSub        -Id "gov-$($sid)"     -Title "Governance – Resource group locks"
-    $vmHtml           = New-TableHtml -Data $vmSub         -Id "vm-$($sid)"      -Title "Compute – Virtual machines without backup"
-    $vmDiskHtml       = New-TableHtml -Data $vmDiskSub     -Id "vmdisk-$($sid)"  -Title "Compute – VMs with legacy disk types (HDD / unmanaged)"
-    $diskHtml         = New-TableHtml -Data $diskSub       -Id "disk-$($sid)"    -Title "Compute – Unattached disks"
-    $pipHtml          = New-TableHtml -Data $pipSub        -Id "pip-$($sid)"     -Title "Compute – Unattached Public IPs"
+    $govHtml          = New-TableHtml -Data $govSub        -Id "gov-$($sid)"     -Title "Governance - Resource group locks"
+    $vmHtml           = New-TableHtml -Data $vmSub         -Id "vm-$($sid)"      -Title "Compute - Virtual machines without backup"
+    $vmDiskHtml       = New-TableHtml -Data $vmDiskSub     -Id "vmdisk-$($sid)"  -Title "Compute - VMs with legacy disk types (HDD / unmanaged)"
+    $diskHtml         = New-TableHtml -Data $diskSub       -Id "disk-$($sid)"    -Title "Compute - Unattached disks"
+    $pipHtml          = New-TableHtml -Data $pipSub        -Id "pip-$($sid)"     -Title "Compute - Unattached Public IPs"
     $storageHtml      = New-TableHtml -Data $storageSubDisplay -Id "stg-$($sid)" -Title "Storage accounts"
-    $kvHtml           = New-TableHtml -Data $kvSubDisplay  -Id "kv-$($sid)"      -Title "Key Vaults – configuration"
+    $kvHtml           = New-TableHtml -Data $kvSubDisplay  -Id "kv-$($sid)"      -Title "Key Vaults - configuration"
     $kvExpHtml        = New-TableHtml -Data $kvExpSub      -Id "kvexp-$($sid)"   -Title "Key Vault objects expiring in next 90 days"
-    $nsgSubnetsHtml   = New-TableHtml -Data $nsgSubnetsSub -Id "nsgsub-$($sid)"  -Title "Network – subnets without NSG"
-    $nsgNicsHtml      = New-TableHtml -Data $nsgNicsSub    -Id "nsgnic-$($sid)"  -Title "Network – NICs without NSG"
-    $nsgRulesHtml     = New-TableHtml -Data $nsgRulesSub   -Id "nsgrule-$($sid)" -Title "Network – NSG rules exposing RDP/SSH from Internet"
+    $nsgSubnetsHtml   = New-TableHtml -Data $nsgSubnetsSub -Id "nsgsub-$($sid)"  -Title "Network - subnets without NSG"
+    $nsgNicsHtml      = New-TableHtml -Data $nsgNicsSub    -Id "nsgnic-$($sid)"  -Title "Network  NICs without NSG"
+    $nsgRulesHtml     = New-TableHtml -Data $nsgRulesSub   -Id "nsgrule-$($sid)" -Title "Network - NSG rules exposing RDP/SSH from Internet"
 
     $issueFlag = if ($hasIssue) { 1 } else { 0 }
 
@@ -1673,9 +1674,9 @@ document.addEventListener('DOMContentLoaded', function () {
               label: function(ctx) {
                 var r = ctx.raw;
                 var count = r.count || 0;
-                if (r.v === 3) return count + ' finding(s) – High';
-                if (r.v === 2) return count + ' finding(s) – Medium';
-                if (r.v === 1) return count + ' finding(s) – Low';
+                if (r.v === 3) return count + ' finding(s) - High';
+                if (r.v === 2) return count + ' finding(s) - Medium';
+                if (r.v === 1) return count + ' finding(s) - Low';
                 return 'No findings';
               }
             }
