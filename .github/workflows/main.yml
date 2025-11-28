@@ -1,0 +1,38 @@
+name: Publish to PowerShell Gallery
+
+on:
+  push:
+    tags:
+      - 'v*'   # v1.0.0, v1.1.0, etc.
+
+jobs:
+  publish:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: List files (debug)
+        shell: pwsh
+        run: |
+          Write-Host "Current directory:"
+          Get-Location
+          Write-Host "Files:"
+          Get-ChildItem -Recurse
+
+      - name: Install PowerShellGet
+        shell: pwsh
+        run: |
+          Install-Module PowerShellGet -Force -Scope CurrentUser
+          Import-Module PowerShellGet
+
+      - name: Publish Azure Health Check script
+        shell: pwsh
+        env:
+          NUGET_API_KEY: ${{ secrets.PSGALLERY_API_KEY }}
+        run: |
+          Publish-Script `
+            -Path './Invoke-AzHealthCheck.ps1' `
+            -NuGetApiKey $env:NUGET_API_KEY `
+            -Repository PSGallery
