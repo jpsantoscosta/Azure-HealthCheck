@@ -85,7 +85,7 @@ function New-TableHtml {
     }
 
     if (-not $hasRows) {
-        [void]$sb.AppendLine("<div class='empty'>✓ No rows to display for this section.</div>")
+        [void]$sb.AppendLine("<div class='empty'>&#10003; No rows to display for this section.</div>")
         [void]$sb.AppendLine("</div>")
         return $sb.ToString()
     }
@@ -93,7 +93,7 @@ function New-TableHtml {
     $first = $rows[0]
     $props = $first.PSObject.Properties.Name
     if (-not $props -or $props.Count -eq 0) {
-        [void]$sb.AppendLine("<div class='empty'>✓ No rows to display for this section.</div>")
+        [void]$sb.AppendLine("<div class='empty'>&#10003; No rows to display for this section.</div>")
         [void]$sb.AppendLine("</div>")
         return $sb.ToString()
     }
