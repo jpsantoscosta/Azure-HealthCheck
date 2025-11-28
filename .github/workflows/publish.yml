@@ -1,0 +1,39 @@
+name: Publish to PowerShell Gallery
+
+on:
+  push:
+    tags:
+      - 'v*'   # Ex.: v1.0.0, v1.1.0
+
+jobs:
+  publish:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install PowerShellGet
+        shell: pwsh
+        run: |
+          Install-Module PowerShellGet -Scope CurrentUser -Force
+          Import-Module PowerShellGet
+
+      - name: Publish Azure Health Check script
+        shell: pwsh
+        env:
+          NUGET_API_KEY: ${{ secrets.PSGALLERY_API_KEY }}
+        run: |
+          Publish-Script `
+            -Path .\Azure-HealthCheck.ps1 `
+            -Name 'Azure-HealthCheck' `
+            -Version '${{ github.ref_name }}'.TrimStart('v') `
+            -Description 'Azure Health Check HTML dashboard for governance, compute, storage, network and Key Vault findings.' `
+            -Author 'Joao Paulo Costa' `
+            -CompanyName 'Get Practical' `
+            -Tags 'Azure','HealthCheck','Governance','HTML','Cloud','Security','Report','GetPractical' `
+            -ProjectUri 'https://github.com/jpsantoscosta/Azure-HealthCheck' `
+            -LicenseUri 'https://github.com/jpsantoscosta/Azure-HealthCheck/blob/main/LICENSE' `
+            -ReleaseNotes 'Automated publish from GitHub Action.' `
+            -NuGetApiKey $env:NUGET_API_KEY `
+            -Repository 'PSGallery'
