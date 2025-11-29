@@ -1,6 +1,6 @@
 <#PSScriptInfo
 
-.VERSION 1.0.3
+.VERSION 1.0.4
 
 .GUID 4129a3f4-6bb2-4dea-9d84-895d5dd2d3b7
 
@@ -29,6 +29,7 @@
     v1.0.1 - Fix the broken lines (ASCII)
     v1.0.2 - Update HTML entity for no rows message
     v1.0.3 - Fix formatting and punctuation in health check report
+    v1.0.4 - Fix formatting and punctuation in health check report
 #>
  
 [CmdletBinding()]
@@ -879,6 +880,29 @@ body {
     font-size: 12px;
     opacity: 0.9;
 }
+.header-links {
+    margin-top: 6px;
+    font-size: 12px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    align-items: center;
+}
+.header-links a {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    color: #dbeafe;
+    text-decoration: none;
+}
+.header-links a:hover {
+    text-decoration: underline;
+}
+.header-links .icon {
+    width: 14px;
+    height: 14px;
+    fill: #dbeafe;
+}
 .main {
     padding: 24px 32px 40px 32px;
     max-width: 1400px;
@@ -1164,11 +1188,32 @@ $header = @"
 <div class="header">
   <div class="header-title">Azure Health Check</div>
   <div class="header-sub">Environment overview for governance, compute, storage, network and Key Vault</div>
-  <div class="header-sub">
-    Author: Joao Paulo Costa -
-    <a href='https://getpractical.co.uk' target='_blank' rel='noopener noreferrer'>getpractical.co.uk</a> ·
-    <a href='https://www.linkedin.com/in/jpsantoscosta' target='_blank' rel='noopener noreferrer'>LinkedIn</a>
+
+  <div class="header-sub">Author: Joao Paulo Costa</div>
+
+  <div class="header-links">
+    <a href="https://getpractical.co.uk" target="_blank" rel="noopener noreferrer">
+      <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M12 2a10 10 0 1 0 .001 20.001A10 10 0 0 0 12 2zm-1 17.93A8.001 8.001 0 0 1 4.07 13H7c.46 2.28 1.57 4.31 3 5.93v1zM4.07 11A8.001 8.001 0 0 1 11 4.07V5c-1.43 1.62-2.54 3.65-3 5.93H4.07zM13 4.07A8.001 8.001 0 0 1 19.93 11H17c-.46-2.28-1.57-4.31-3-5.93V4.07zM17 13h2.93A8.001 8.001 0 0 1 13 19.93V19c1.43-1.62 2.54-3.65 3-5.93z" />
+      </svg>
+      getpractical.co.uk
+    </a>
+
+    <a href="https://www.linkedin.com/in/jpsantoscosta" target="_blank" rel="noopener noreferrer">
+      <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M4.98 3.5C4.98 4.88 3.9 6 2.5 6S0 4.88 0 3.5 1.08 1 2.5 1s2.48 1.12 2.48 2.5zM.2 8.26h4.6V23H.2zM8.34 8.26h4.41v2.01h.06c.61-1.16 2.1-2.39 4.33-2.39 4.63 0 5.48 3.05 5.48 7.01V23h-4.6v-7.1c0-1.69-.03-3.86-2.35-3.86-2.36 0-2.72 1.84-2.72 3.74V23h-4.6z" />
+      </svg>
+      LinkedIn
+    </a>
+
+    <a href="https://github.com/jpsantoscosta" target="_blank" rel="noopener noreferrer">
+      <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M12 .5C5.65.5.5 5.65.5 12c0 5.09 3.29 9.4 7.86 10.93.58.11.79-.25.79-.56 0-.28-.01-1.02-.02-2-3.2.7-3.88-1.54-3.88-1.54-.53-1.34-1.3-1.7-1.3-1.7-1.06-.73.08-.72.08-.72 1.17.08 1.78 1.2 1.78 1.2 1.04 1.77 2.73 1.26 3.4.96.11-.76.41-1.26.75-1.55-2.56-.29-5.26-1.28-5.26-5.7 0-1.26.45-2.29 1.19-3.09-.12-.29-.52-1.47.11-3.06 0 0 .97-.31 3.18 1.18a10.9 10.9 0 0 1 5.8 0c2.2-1.49 3.17-1.18 3.17-1.18.63 1.59.23 2.77.11 3.06.74.8 1.18 1.83 1.18 3.09 0 4.43-2.7 5.41-5.28 5.69.42.36.8 1.09.8 2.2 0 1.59-.02 2.87-.02 3.26 0 .31.21.68.8.56A10.52 10.52 0 0 0 23.5 12C23.5 5.65 18.35.5 12 .5z" />
+      </svg>
+      GitHub
+    </a>
   </div>
+
   <div class="header-meta">
     Tenant: $tenantId |
     Subscriptions: $totalSubs |
@@ -1210,7 +1255,7 @@ $header = @"
   <div class='card-value'><span id='summary-subs-value'>$totalSubs</span></div>
   <div class='card-sub'>
     <span class='bad'><span id='summary-subs-bad'>$subsBadPercent</span>% affected</span>
-    ·
+    &nbsp;&middot;&nbsp;
     <span class='good'><span id='summary-subs-good'>$subsGoodPercent</span>% healthy</span>
   </div>
 </div>
@@ -1223,7 +1268,7 @@ $header = @"
   <div class='card-value'><span id='summary-rg-value'>$totalRgNoLocks</span></div>
   <div class='card-sub'>
     <span class='bad'><span id='summary-rg-bad'>$rgBadPercent</span>% affected</span>
-    ·
+    &nbsp;&middot;&nbsp;
     <span class='good'><span id='summary-rg-good'>$rgGoodPercent</span>% ok</span>
   </div>
 </div>
@@ -1236,7 +1281,7 @@ $header = @"
   <div class='card-value'><span id='summary-vm-value'>$totalVmNoBackup</span></div>
   <div class='card-sub'>
     <span class='bad'><span id='summary-vm-bad'>$vmBadPercent</span>% affected</span>
-    ·
+    &nbsp;&middot;&nbsp;
     <span class='good'><span id='summary-vm-good'>$vmGoodPercent</span>% ok</span>
   </div>
 </div>
@@ -1249,7 +1294,7 @@ $header = @"
   <div class='card-value'><span id='summary-storage-value'>$totalStorageRisks</span></div>
   <div class='card-sub'>
     <span class='bad'><span id='summary-storage-bad'>$storageBadPercent</span>% affected</span>
-    ·
+    &nbsp;&middot;&nbsp;
     <span class='good'><span id='summary-storage-good'>$storageGoodPercent</span>% ok</span>
   </div>
 </div>
