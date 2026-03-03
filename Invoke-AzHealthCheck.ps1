@@ -775,10 +775,50 @@ foreach ($sub in $subscriptions) {
     $kvExpiring60Sub   = ($kvExpiryResults    | Where-Object { $_.SubscriptionId -eq $sid -and $_.DaysToExpiry -le 60 -and $_.DaysToExpiry -ge 0 } | Measure-Object).Count
 
     # v1.0.5
-    $activityLogNoDiagSub = ($activityLogDiagResults | Where-Object { $_.SubscriptionId -eq $sid -and -not $_.DiagnosticConfigured } | Measure-Object).Count
-    $sqlInstancesSub      = ($sqlInstanceResults     | Where-Object { $_.SubscriptionId -eq $sid } | Measure-Object).Count
-    $policyAssignSub      = ($policyAssignmentResults| Where-Object { $_.SubscriptionId -eq $sid } | Measure-Object).Count
+    # Cache activity log diagnostic results grouped by SubscriptionId to avoid rescanning the full array
+    if (-not $script:ActivityLogDiagBySub) {
+        $script:ActivityLogDiagBySub = @{}
+        foreach ($group in ($activityLogDiagResults | Group-Object SubscriptionId)) {
+            $script:ActivityLogDiagBySub[$group.Name] = $group.Group
+        }
+    }
 
+    $activityLogDiagForSub = @()
+    if ($script:ActivityLogDiagBySub.ContainsKey($sid)) {
+        $activityLogDiagForSub = $script:ActivityLogDiagBySub[$sid]
+    }
+
+    $activityLogNoDiagSub = ($activityLogDiagForSub | Where-Object { -not $_.DiagnosticConfigured } | Measure-Object).Count
+
+    # Cache SQL instance results grouped by SubscriptionId
+    if (-not $script:SqlInstanceBySub) {
+        $script:SqlInstanceBySub = @{}
+        foreach ($group in ($sqlInstanceResults | Group-Object SubscriptionId)) {
+            $script:SqlInstanceBySub[$group.Name] = $group.Group
+        }
+    }
+
+    if ($script:SqlInstanceBySub.ContainsKey($sid)) {
+        $sqlInstancesSub = $script:SqlInstanceBySub[$sid].Count
+    }
+    else {
+        $sqlInstancesSub = 0
+    }
+
+    # Cache policy assignment results grouped by SubscriptionId
+    if (-not $script:PolicyAssignmentBySub) {
+        $script:PolicyAssignmentBySub = @{}
+        foreach ($group in ($policyAssignmentResults | Group-Object SubscriptionId)) {
+            $script:PolicyAssignmentBySub[$group.Name] = $group.Group
+        }
+    }
+
+    if ($script:PolicyAssignmentBySub.ContainsKey($sid)) {
+        $policyAssignSub = $script:PolicyAssignmentBySub[$sid].Count
+    }
+    else {
+        $policyAssignSub = 0
+    }
     $hasIssue = (
         $rgWithoutLocks + $vmWithoutBackup + $unattachedDisks + $freePips + $storageRisksSub +
         $vmHddSub + $vmUnmanagedSub +
