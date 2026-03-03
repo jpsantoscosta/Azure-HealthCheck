@@ -173,7 +173,7 @@ $pipResults          = @()
 $storageResults      = @()
 $subStats            = @()
 
-# Existing "new collections" already in main
+# Collections for VM disk, Key Vault, and NSG configuration analysis
 $vmDiskModernResults = @()  # VMs with HDD / unmanaged disks
 $kvResults           = @()  # Key Vault config
 $kvExpiryResults     = @()  # KV objects expiring
