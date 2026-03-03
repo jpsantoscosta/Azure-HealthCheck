@@ -184,7 +184,7 @@ $nsgOpenMgmtRules    = @()  # NSG rules exposing RDP/SSH
 # v1.0.5 - NEW collections
 $activityLogDiagResults = @()  # Activity Log diagnostic settings status at subscription scope (any destination)
 $sqlInstanceResults     = @()  # SQL instances inventory (Azure SQL, MI, SQL on VM)
-$policyAssignmentResults= @()  # Azure Policy assignments inventory (subscription scope)
+$policyAssignmentResults     = @()  # Azure Policy assignments inventory (subscription scope)
 
 [int]$totalRgAll      = 0
 [int]$totalVmAll      = 0
