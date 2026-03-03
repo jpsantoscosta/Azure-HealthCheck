@@ -1,6 +1,6 @@
 <#PSScriptInfo
 
-.VERSION 1.0.4
+.VERSION 1.0.5
 
 .GUID 4129a3f4-6bb2-4dea-9d84-895d5dd2d3b7
 
@@ -30,6 +30,7 @@
     v1.0.2 - Update HTML entity for no rows message
     v1.0.3 - Fix formatting and punctuation in health check report
     v1.0.4 - Fix formatting and punctuation in health check report
+    v1.0.5 - Add checks: Activity Log diagnostic settings (any destination), SQL instances inventory (Azure SQL, Managed Instance, SQL on VM), and Azure Policy assignments inventory
 #>
  
 [CmdletBinding()]
@@ -118,6 +119,11 @@ function New-TableHtml {
                 $trClass = " class='row-risk'"
             }
         }
+        elseif ($row.PSObject.Properties.Name -contains 'IsRisk') {
+            if ($row.IsRisk) {
+                $trClass = " class='row-risk'"
+            }
+        }
 
         [void]$sb.AppendLine("<tr$trClass>")
         foreach ($p in $props) {
@@ -167,13 +173,18 @@ $pipResults          = @()
 $storageResults      = @()
 $subStats            = @()
 
-# NEW collections
+# Collections for VM disk, Key Vault, and NSG configuration analysis
 $vmDiskModernResults = @()  # VMs with HDD / unmanaged disks
 $kvResults           = @()  # Key Vault config
 $kvExpiryResults     = @()  # KV objects expiring
 $nsgSubnetsMissing   = @()  # Subnets without NSG
 $nsgNicsMissing      = @()  # NICs without NSG
 $nsgOpenMgmtRules    = @()  # NSG rules exposing RDP/SSH
+
+# v1.0.5 - NEW collections
+$activityLogDiagResults = @()  # Activity Log diagnostic settings status at subscription scope (any destination)
+$sqlInstanceResults     = @()  # SQL instances inventory (Azure SQL, MI, SQL on VM)
+$policyAssignmentResults     = @()  # Azure Policy assignments inventory (subscription scope)
 
 [int]$totalRgAll      = 0
 [int]$totalVmAll      = 0
@@ -195,7 +206,8 @@ function Get-SubScore {
         [int]$NicsNoNsg,
         [int]$NsgOpenMgmtRules,
         [int]$KeyVaultsNoPurge,
-        [int]$KvSecretsExpiring60
+        [int]$KvSecretsExpiring60,
+        [int]$ActivityLogNoDiag
     )
 
     $score = 100
@@ -208,6 +220,10 @@ function Get-SubScore {
     $score -= [math]::Min(10, ($VmHdd + $VmUnmanaged))
     $score -= [math]::Min(10, ($SubnetsNoNsg + $NicsNoNsg))
     $score -= [math]::Min(10, ($NsgOpenMgmtRules + $KeyVaultsNoPurge + [int]([math]::Ceiling($KvSecretsExpiring60 / 5.0))))
+
+    # v1.0.5 - Monitoring baseline: missing Activity Log diagnostics (any destination)
+    # If not configured, apply a small penalty (0 or 10)
+    $score -= [math]::Min(10, $ActivityLogNoDiag * 10)
 
     if ($score -lt 0)   { $score = 0 }
     if ($score -gt 100) { $score = 100 }
@@ -663,6 +679,83 @@ foreach ($sub in $subscriptions) {
     }
 
     #-------------------------
+    # v1.0.5 - Activity Log diagnostic settings (any destination)
+    #-------------------------
+    $subResourceId = "/subscriptions/$sid"
+    $diagConfigured = $false
+    $diagDestinations = @()
+
+    try {
+        $diagSettings = Get-AzDiagnosticSetting -ResourceId $subResourceId -ErrorAction SilentlyContinue
+        if ($diagSettings) {
+            $diagConfigured = $true
+            foreach ($d in @($diagSettings)) {
+                if ($d.WorkspaceId)               { $diagDestinations += "Log Analytics" }
+                if ($d.StorageAccountId)          { $diagDestinations += "Storage" }
+                if ($d.EventHubAuthorizationRuleId){ $diagDestinations += "Event Hub" }
+                if ($d.MarketplacePartnerId)      { $diagDestinations += "Partner" }
+            }
+        }
+    } catch { }
+
+    $diagDestinations = ($diagDestinations | Select-Object -Unique)
+
+    $activityLogDiagResults += [pscustomobject]@{
+        SubscriptionId         = $sid
+        SubscriptionName       = $sname
+        DiagnosticConfigured   = $diagConfigured
+        Destinations           = ($diagDestinations -join ', ')
+        IsRisk                 = (-not $diagConfigured)
+    }
+
+    #-------------------------
+    # v1.0.5 - SQL instances inventory (Azure SQL / MI / SQL on VM)
+    #-------------------------
+    # Inventory only (does not change existing checks)
+    $sqlTypes = @(
+        "Microsoft.Sql/servers",                  # Azure SQL logical server
+        "Microsoft.Sql/managedInstances",         # Azure SQL Managed Instance
+        "Microsoft.SqlVirtualMachine/sqlVirtualMachines" # SQL on Azure VM (SQL IaaS Agent)
+    )
+
+    foreach ($t in $sqlTypes) {
+        $sqlRes = @()
+        try {
+            $sqlRes = Get-AzResource -ResourceType $t -ErrorAction SilentlyContinue
+        } catch { $sqlRes = @() }
+
+        foreach ($r in @($sqlRes)) {
+            $sqlInstanceResults += [pscustomobject]@{
+                SubscriptionId   = $sid
+                SubscriptionName = $sname
+                ResourceGroup    = $r.ResourceGroupName
+                ResourceType     = $t
+                Name             = $r.Name
+                Location         = $r.Location
+            }
+        }
+    }
+
+    #-------------------------
+    # v1.0.5 - Azure Policy assignments inventory (subscription scope)
+    #-------------------------
+    $policyAssignments = @()
+    try {
+        $policyAssignments = Get-AzPolicyAssignment -Scope $subResourceId -ErrorAction SilentlyContinue
+    } catch { $policyAssignments = @() }
+
+    foreach ($pa in @($policyAssignments)) {
+        $policyAssignmentResults += [pscustomobject]@{
+            SubscriptionId      = $sid
+            SubscriptionName    = $sname
+            Name                = $pa.Name
+            DisplayName         = $pa.Properties.DisplayName
+            Scope               = $pa.Properties.Scope
+            PolicyDefinitionId  = $pa.Properties.PolicyDefinitionId
+        }
+    }
+
+    #-------------------------
     # Aggregate per-subscription stats
     #-------------------------
     $rgWithoutLocks   = ($govResults          | Where-Object { $_.SubscriptionId -eq $sid } | Measure-Object).Count
@@ -681,11 +774,57 @@ foreach ($sub in $subscriptions) {
     $kvWithoutPurgeSub = ($kvResults          | Where-Object { $_.SubscriptionId -eq $sid -and -not $_.PurgeProtection } | Measure-Object).Count
     $kvExpiring60Sub   = ($kvExpiryResults    | Where-Object { $_.SubscriptionId -eq $sid -and $_.DaysToExpiry -le 60 -and $_.DaysToExpiry -ge 0 } | Measure-Object).Count
 
+    # v1.0.5
+    # Cache activity log diagnostic results grouped by SubscriptionId to avoid rescanning the full array
+    if (-not $script:ActivityLogDiagBySub) {
+        $script:ActivityLogDiagBySub = @{}
+        foreach ($group in ($activityLogDiagResults | Group-Object SubscriptionId)) {
+            $script:ActivityLogDiagBySub[$group.Name] = $group.Group
+        }
+    }
+
+    $activityLogDiagForSub = @()
+    if ($script:ActivityLogDiagBySub.ContainsKey($sid)) {
+        $activityLogDiagForSub = $script:ActivityLogDiagBySub[$sid]
+    }
+
+    $activityLogNoDiagSub = ($activityLogDiagForSub | Where-Object { -not $_.DiagnosticConfigured } | Measure-Object).Count
+
+    # Cache SQL instance results grouped by SubscriptionId
+    if (-not $script:SqlInstanceBySub) {
+        $script:SqlInstanceBySub = @{}
+        foreach ($group in ($sqlInstanceResults | Group-Object SubscriptionId)) {
+            $script:SqlInstanceBySub[$group.Name] = $group.Group
+        }
+    }
+
+    if ($script:SqlInstanceBySub.ContainsKey($sid)) {
+        $sqlInstancesSub = $script:SqlInstanceBySub[$sid].Count
+    }
+    else {
+        $sqlInstancesSub = 0
+    }
+
+    # Cache policy assignment results grouped by SubscriptionId
+    if (-not $script:PolicyAssignmentBySub) {
+        $script:PolicyAssignmentBySub = @{}
+        foreach ($group in ($policyAssignmentResults | Group-Object SubscriptionId)) {
+            $script:PolicyAssignmentBySub[$group.Name] = $group.Group
+        }
+    }
+
+    if ($script:PolicyAssignmentBySub.ContainsKey($sid)) {
+        $policyAssignSub = $script:PolicyAssignmentBySub[$sid].Count
+    }
+    else {
+        $policyAssignSub = 0
+    }
     $hasIssue = (
         $rgWithoutLocks + $vmWithoutBackup + $unattachedDisks + $freePips + $storageRisksSub +
         $vmHddSub + $vmUnmanagedSub +
         $subnetsNoNsgSub + $nicsNoNsgSub + $openMgmtRulesSub +
-        $kvWithoutPurgeSub + $kvExpiring60Sub
+        $kvWithoutPurgeSub + $kvExpiring60Sub +
+        $activityLogNoDiagSub
     ) -gt 0
 
     $score = Get-SubScore `
@@ -693,7 +832,8 @@ foreach ($sub in $subscriptions) {
         -UnattachedDisks $unattachedDisks -FreePips $freePips `
         -VmHdd $vmHddSub -VmUnmanaged $vmUnmanagedSub `
         -SubnetsNoNsg $subnetsNoNsgSub -NicsNoNsg $nicsNoNsgSub -NsgOpenMgmtRules $openMgmtRulesSub `
-        -KeyVaultsNoPurge $kvWithoutPurgeSub -KvSecretsExpiring60 $kvExpiring60Sub
+        -KeyVaultsNoPurge $kvWithoutPurgeSub -KvSecretsExpiring60 $kvExpiring60Sub `
+        -ActivityLogNoDiag $activityLogNoDiagSub
 
     $subStats += [pscustomobject]@{
         Id                   = $sid
@@ -715,6 +855,11 @@ foreach ($sub in $subscriptions) {
         NsgOpenMgmtRules     = $openMgmtRulesSub
         KeyVaultsNoPurge     = $kvWithoutPurgeSub
         KvSecretsExpiring60  = $kvExpiring60Sub
+
+        # v1.0.5 - added to support heatmap + tables
+        ActivityLogNoDiag    = $activityLogNoDiagSub
+        SqlInstances         = $sqlInstancesSub
+        PolicyAssignments    = $policyAssignSub
     }
 
     $totalRgAll      += $rgTotalSub
@@ -781,6 +926,11 @@ $totalNsgOpenRules  = ($nsgOpenMgmtRules    | Measure-Object).Count
 $totalKvNoPurge     = ($kvResults           | Where-Object { -not $_.PurgeProtection }                                   | Measure-Object).Count
 $totalKvExpiring60  = ($kvExpiryResults     | Where-Object { $_.DaysToExpiry -le 60 -and $_.DaysToExpiry -ge 0 }         | Measure-Object).Count
 
+# v1.0.5 global metrics
+$totalActivityLogNoDiag = ($activityLogDiagResults | Where-Object { -not $_.DiagnosticConfigured } | Measure-Object).Count
+$totalSqlInstances      = ($sqlInstanceResults     | Measure-Object).Count
+$totalPolicyAssignments = ($policyAssignmentResults| Measure-Object).Count
+
 # Security metrics (kept for table, not for old bars)
 $securityMetrics = @(
     [pscustomobject]@{ Name = 'Unattached Public IPs';                     Value = ($pipResults | Measure-Object).Count }
@@ -795,6 +945,11 @@ $securityMetrics = @(
     [pscustomobject]@{ Name = 'NSG rules exposing RDP/SSH';                Value = $totalNsgOpenRules }
     [pscustomobject]@{ Name = 'Key Vaults without purge protection';       Value = $totalKvNoPurge }
     [pscustomobject]@{ Name = 'KV objects expiring ≤60 days';              Value = $totalKvExpiring60 }
+
+    # v1.0.5
+    [pscustomobject]@{ Name = 'Activity Log diagnostics not configured';   Value = $totalActivityLogNoDiag }
+    [pscustomobject]@{ Name = 'SQL instances (inventory)';                 Value = $totalSqlInstances }
+    [pscustomobject]@{ Name = 'Azure Policy assignments (inventory)';      Value = $totalPolicyAssignments }
 )
 
 $maxMetric = ($securityMetrics.Value | Measure-Object -Maximum).Maximum
@@ -805,7 +960,8 @@ $topSubs = $subStats | ForEach-Object {
     $issues = $_.RgBad + $_.VmBad + $_.StorageBad + $_.UnattachedDisks + $_.FreePips +
               $_.VmHdd + $_.VmUnmanaged +
               $_.SubnetsNoNsg + $_.NicsNoNsg + $_.NsgOpenMgmtRules +
-              $_.KeyVaultsNoPurge + $_.KvSecretsExpiring60
+              $_.KeyVaultsNoPurge + $_.KvSecretsExpiring60 +
+              $_.ActivityLogNoDiag
 
     [pscustomobject]@{
         Name   = $_.Name
@@ -825,6 +981,8 @@ $categoryBreakdown = @(
     [pscustomobject]@{ Category = 'Storage';         Count = $totalStorageRisks }
     [pscustomobject]@{ Category = 'Network';         Count = $totalSubnetsNoNsg + $totalNicsNoNsg + $totalNsgOpenRules }
     [pscustomobject]@{ Category = 'KeyVault';        Count = $totalKvNoPurge + $totalKvExpiring60 }
+    # v1.0.5 - monitoring risk signal (any destination)
+    [pscustomobject]@{ Category = 'ActivityLog';     Count = $totalActivityLogNoDiag }
 ) | Where-Object { $_.Count -gt 0 }
 
 $categoryJson = $categoryBreakdown | ConvertTo-Json -Compress
@@ -838,6 +996,11 @@ $heatMapRows = foreach ($s in $subStats) {
         Storage      = [int]$s.StorageBad
         Network      = [int]($s.SubnetsNoNsg + $s.NicsNoNsg + $s.NsgOpenMgmtRules)
         KeyVault     = [int]($s.KeyVaultsNoPurge + $s.KvSecretsExpiring60)
+
+        # v1.0.5 (shown in heatmap)
+        ActivityLog  = [int]$s.ActivityLogNoDiag
+        SQL          = [int]$s.SqlInstances
+        Policy       = [int]$s.PolicyAssignments
     }
 }
 
@@ -1241,6 +1404,9 @@ $header = @"
     <li><strong>Storage</strong> - Storage accounts with TLS &lt; 1.2, public blob access enabled, or soft delete / recovery not clearly configured.</li>
     <li><strong>Network</strong> - Subnets and NICs without NSG protection, and NSG rules exposing RDP (3389) or SSH (22) from the Internet.</li>
     <li><strong>Key Vault</strong> - Key Vaults without purge protection and secrets / keys / certificates expiring soon and requiring review.</li>
+    <li><strong>Activity Log</strong> - Whether subscription Activity Log diagnostics are configured (any destination: Log Analytics / Storage / Event Hub / Partner).</li>
+    <li><strong>SQL</strong> - Inventory of SQL instances (Azure SQL logical servers, Managed Instances, and SQL on Azure VMs).</li>
+    <li><strong>Azure Policy</strong> - Inventory of Policy assignments at subscription scope.</li>
   </ul>
 </div>
 "@)
@@ -1302,7 +1468,7 @@ $header = @"
 
 [void]$htmlSb.AppendLine("</div>")  # summary-cards
 
-# ===== NEW: Visual risk overview (donut + heat map) =====
+# ===== Visual risk overview (donut + heat map) =====
 [void]$htmlSb.AppendLine(@"
 <div class='section'>
   <div class='table-title'>Risk overview</div>
@@ -1310,12 +1476,12 @@ $header = @"
   <div class='charts-grid'>
     <div class='chart-card'>
       <div class='chart-title'>Risk by category</div>
-      <div class='chart-sub'>Split of all findings across governance, backup, compute hygiene, storage, network and Key Vault.</div>
+      <div class='chart-sub'>Split of all findings across categories (includes Activity Log diagnostics missing).</div>
       <canvas id='riskDonut'></canvas>
     </div>
     <div class='chart-card'>
       <div class='chart-title'>Heat map by subscription</div>
-      <div class='chart-sub'>Subscriptions (rows) vs categories (columns). Colour indicates severity based on finding count.</div>
+      <div class='chart-sub'>Subscriptions (rows) vs categories (columns). Colour indicates severity based on finding count / inventory size.</div>
       <canvas id='heatMap'></canvas>
       <div class='heatmap-legend'>
         <span class='heat-legend-dot heat-none'></span>None&nbsp;&nbsp;
@@ -1328,7 +1494,7 @@ $header = @"
 </div>
 "@)
 
-# ===== NEW: Top-5 subscriptions visual + table =====
+# ===== Top-5 subscriptions visual + table =====
 [void]$htmlSb.AppendLine("<div class='section'>")
 [void]$htmlSb.AppendLine("<div class='table-title'>Top 5 subscriptions by issue count</div>")
 [void]$htmlSb.AppendLine("<div class='chart-card chart-card-full'><canvas id='topSubsChart'></canvas></div>")
@@ -1367,6 +1533,12 @@ foreach ($sub in $subscriptions) {
     $nsgSubnetsSub = $nsgSubnetsMissing   | Where-Object { $_.SubscriptionId -eq $sid }
     $nsgNicsSub    = $nsgNicsMissing      | Where-Object { $_.SubscriptionId -eq $sid }
     $nsgRulesSub   = $nsgOpenMgmtRules    | Where-Object { $_.SubscriptionId -eq $sid }
+
+    # v1.0.5
+    $actLogSub     = $activityLogDiagResults | Where-Object { $_.SubscriptionId -eq $sid }
+    $sqlSub        = $sqlInstanceResults     | Where-Object { $_.SubscriptionId -eq $sid }
+    $policySub     = $policyAssignmentResults| Where-Object { $_.SubscriptionId -eq $sid }
+
     $stats         = $subStats            | Where-Object { $_.Id -eq $sid }
 
     $rgWithoutLocks   = $stats.RgBad
@@ -1404,6 +1576,28 @@ foreach ($sub in $subscriptions) {
         SoftDelete,
         PurgeProtection
 
+    $actLogSubDisplay = $actLogSub | Select-Object `
+        SubscriptionId,
+        SubscriptionName,
+        DiagnosticConfigured,
+        Destinations,
+        IsRisk
+
+    $sqlSubDisplay = $sqlSub | Select-Object `
+        SubscriptionId,
+        SubscriptionName,
+        ResourceGroup,
+        ResourceType,
+        Name,
+        Location
+
+    $policySubDisplay = $policySub | Select-Object `
+        SubscriptionId,
+        SubscriptionName,
+        DisplayName,
+        Scope,
+        PolicyDefinitionId
+
     $govHtml          = New-TableHtml -Data $govSub        -Id "gov-$($sid)"     -Title "Governance - Resource group locks"
     $vmHtml           = New-TableHtml -Data $vmSub         -Id "vm-$($sid)"      -Title "Compute - Virtual machines without backup"
     $vmDiskHtml       = New-TableHtml -Data $vmDiskSub     -Id "vmdisk-$($sid)"  -Title "Compute - VMs with legacy disk types (HDD / unmanaged)"
@@ -1415,6 +1609,11 @@ foreach ($sub in $subscriptions) {
     $nsgSubnetsHtml   = New-TableHtml -Data $nsgSubnetsSub -Id "nsgsub-$($sid)"  -Title "Network - subnets without NSG"
     $nsgNicsHtml      = New-TableHtml -Data $nsgNicsSub    -Id "nsgnic-$($sid)"  -Title "Network  NICs without NSG"
     $nsgRulesHtml     = New-TableHtml -Data $nsgRulesSub   -Id "nsgrule-$($sid)" -Title "Network - NSG rules exposing RDP/SSH from Internet"
+
+    # v1.0.5 tables
+    $actLogHtml       = New-TableHtml -Data $actLogSubDisplay -Id "actlog-$($sid)" -Title "Activity Log - diagnostic settings (any destination)"
+    $sqlHtml          = New-TableHtml -Data $sqlSubDisplay    -Id "sql-$($sid)"    -Title "SQL - instances inventory (Azure SQL / MI / SQL on VM)"
+    $policyHtml       = New-TableHtml -Data $policySubDisplay -Id "pol-$($sid)"    -Title "Azure Policy - assignments (subscription scope)"
 
     $issueFlag = if ($hasIssue) { 1 } else { 0 }
 
@@ -1442,6 +1641,11 @@ foreach ($sub in $subscriptions) {
     [void]$htmlSb.AppendLine($nsgSubnetsHtml)
     [void]$htmlSb.AppendLine($nsgNicsHtml)
     [void]$htmlSb.AppendLine($nsgRulesHtml)
+
+    # v1.0.5 appended (does not change existing tables)
+    [void]$htmlSb.AppendLine($actLogHtml)
+    [void]$htmlSb.AppendLine($sqlHtml)
+    [void]$htmlSb.AppendLine($policyHtml)
 
     [void]$htmlSb.AppendLine("</div>")
 }
@@ -1493,8 +1697,6 @@ document.addEventListener("DOMContentLoaded", function () {
 
       if (hasIssue) { subsBad++; }
     });
-
-    var subsGood = subsTotalSelected - subsBad;
 
     function calcPerc(bad, total) {
       if (!total || total === 0) {
@@ -1644,7 +1846,10 @@ document.addEventListener('DOMContentLoaded', function () {
   var heatCanvas = document.getElementById('heatMap');
   if (heatCanvas && heatMapData.length > 0) {
     var ctxH = heatCanvas.getContext('2d');
-    var categories = ['Governance','Backup','Compute','Storage','Network','KeyVault'];
+
+    // v1.0.5 - extended categories
+    // Note: inventory-oriented columns like SQL/Policy are excluded from the risk heat map
+    var categories = ['Governance','Backup','Compute','Storage','Network','KeyVault','ActivityLog'];
     var subs = heatMapData.map(function (r) { return r.Subscription; });
 
     function countToSeverity(count) {
@@ -1719,10 +1924,10 @@ document.addEventListener('DOMContentLoaded', function () {
               label: function(ctx) {
                 var r = ctx.raw;
                 var count = r.count || 0;
-                if (r.v === 3) return count + ' finding(s) - High';
-                if (r.v === 2) return count + ' finding(s) - Medium';
-                if (r.v === 1) return count + ' finding(s) - Low';
-                return 'No findings';
+                if (r.v === 3) return count + ' item(s) - High';
+                if (r.v === 2) return count + ' item(s) - Medium';
+                if (r.v === 1) return count + ' item(s) - Low';
+                return 'No items';
               }
             }
           }
