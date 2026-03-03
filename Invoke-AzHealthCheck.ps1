@@ -1848,7 +1848,8 @@ document.addEventListener('DOMContentLoaded', function () {
     var ctxH = heatCanvas.getContext('2d');
 
     // v1.0.5 - extended categories
-    var categories = ['Governance','Backup','Compute','Storage','Network','KeyVault','ActivityLog','SQL','Policy'];
+    // Note: inventory-oriented columns like SQL/Policy are excluded from the risk heat map
+    var categories = ['Governance','Backup','Compute','Storage','Network','KeyVault','ActivityLog'];
     var subs = heatMapData.map(function (r) { return r.Subscription; });
 
     function countToSeverity(count) {
