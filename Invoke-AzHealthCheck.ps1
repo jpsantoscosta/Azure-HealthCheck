@@ -272,6 +272,7 @@ function Get-SubScore {
         [int]$FreePips,
         [int]$VmHdd,
         [int]$VmUnmanaged,
+        [int]$VmHighCpu,
         [int]$SubnetsNoNsg,
         [int]$NicsNoNsg,
         [int]$NsgOpenMgmtRules,
@@ -287,6 +288,7 @@ function Get-SubScore {
     $score -= [math]::Min(20, $StorageBad * 2)
     $score -= [math]::Min(10, ($UnattachedDisks + $FreePips))
     $score -= [math]::Min(10, ($VmHdd + $VmUnmanaged))
+    $score -= [math]::Min(10, $VmHighCpu)
     $score -= [math]::Min(10, ($SubnetsNoNsg + $NicsNoNsg))
     $score -= [math]::Min(10, ($NsgOpenMgmtRules + $KeyVaultsNoPurge + [int]([math]::Ceiling($KvSecretsExpiring60 / 5.0))))
 
@@ -396,6 +398,7 @@ foreach ($sub in $subscriptions) {
     $cpuEnd   = Get-Date
     $cpuStart = $cpuEnd.AddDays(-7)
 
+    Write-Info ("Fetching CPU metrics for {0} VM(s) (one API call per VM — may take a moment)…" -f $vmList.Count)
     foreach ($vm in $vmList) {
         $vmName   = $vm.Name
         $rgName   = $vm.ResourceGroupName
@@ -459,7 +462,7 @@ foreach ($sub in $subscriptions) {
         }
 
         # v1.0.6 - CPU high check (P95 over last 7 days)
-        # Note: This can be slower in large estates (one metrics call per VM).
+        # Note: one metrics API call per VM — can be slow in large estates.
         try {
             if ($vm.Id) {
                 $metric = Get-AzMetric `
@@ -499,7 +502,9 @@ foreach ($sub in $subscriptions) {
                     }
                 }
             }
-        } catch { }
+        } catch {
+            Write-Info "WARNING: Could not read CPU metrics for '$vmName' ($rgName) — $_"
+        }
     }
 
     # If you want to strictly cap output to top-N per subscription, trim at the end:
@@ -921,7 +926,7 @@ foreach ($sub in $subscriptions) {
     $score = Get-SubScore `
         -RgBad $rgWithoutLocks -VmBad $vmWithoutBackup -StorageBad $storageRisksSub `
         -UnattachedDisks $unattachedDisks -FreePips $freePips `
-        -VmHdd $vmHddSub -VmUnmanaged $vmUnmanagedSub `
+        -VmHdd $vmHddSub -VmUnmanaged $vmUnmanagedSub -VmHighCpu $vmHighCpuSub `
         -SubnetsNoNsg $subnetsNoNsgSub -NicsNoNsg $nicsNoNsgSub -NsgOpenMgmtRules $openMgmtRulesSub `
         -KeyVaultsNoPurge $kvWithoutPurgeSub -KvSecretsExpiring60 $kvExpiring60Sub `
         -ActivityLogNoDiag $activityLogNoDiagSub
@@ -1065,7 +1070,7 @@ $categoryBreakdown = @(
     [pscustomobject]@{ Category = 'ActivityLog'; Count = $totalActivityLogNoDiag }
 ) | Where-Object { $_.Count -gt 0 }
 
-$categoryJson = $categoryBreakdown | ConvertTo-Json -Compress
+$categoryJson = ($categoryBreakdown | ConvertTo-Json -Compress) -replace '</script>', '<\/script>'
 
 $heatMapRows = foreach ($s in $subStats) {
     [pscustomobject]@{
@@ -1082,8 +1087,8 @@ $heatMapRows = foreach ($s in $subStats) {
     }
 }
 
-$heatMapJson = $heatMapRows | ConvertTo-Json -Compress
-$topSubsJson = $topSubs     | Select-Object Name, Issues | ConvertTo-Json -Compress
+$heatMapJson = ($heatMapRows | ConvertTo-Json -Compress) -replace '</script>', '<\/script>'
+$topSubsJson = ($topSubs | Select-Object Name, Issues | ConvertTo-Json -Compress) -replace '</script>', '<\/script>'
 
 #=============================
 # Build HTML
