@@ -6,7 +6,7 @@
 
 .AUTHOR Joao Paulo Costa
 
-.DESCRIPTION This script generates a Azure Health Check HTML report for governance, compute, storage, network, Key Vault, Activity Log, SQL inventory, and Azure Policy.
+.DESCRIPTION This script generates an Azure Health Check HTML report for: governance, compute, storage, network, Key Vault, Activity Log, SQL inventory, and Azure Policy.
 
 .COMPANYNAME getpractical.co.uk
 
