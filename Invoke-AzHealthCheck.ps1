@@ -1,6 +1,6 @@
 <#PSScriptInfo
 
-.VERSION 1.0.8
+.VERSION 1.0.9
 
 .GUID 4129a3f4-6bb2-4dea-9d84-895d5dd2d3b7
 
@@ -34,6 +34,7 @@
     v1.0.6 - Security: HTML-encode table output to mitigate XSS; Reliability: make Policy assignment parsing forward-compatible + suppress Az.Policy breaking-change warning; Add compute check: VMs with high CPU (P95 over last 7 days)
     v1.0.7 - Fix: replace all non-ASCII characters (en/em dashes, ellipsis, <= symbol) with ASCII equivalents for PS Gallery compatibility
     v1.0.8 - Suppress Az module warnings: Get-AzSubscription tenant auth, Get-AzMetric DetailedOutput deprecation, Get-AzDiagnosticSetting breaking-change, Az.Network unapproved-verb noise
+    v1.0.9 - Fix tenant auth warning properly: scope Get-AzSubscription to the authenticated tenant via -TenantId from Get-AzContext
 #>
 
 [CmdletBinding()]
@@ -221,8 +222,9 @@ if (-not $ctx) {
 # Pre-import Az.Network with -DisableNameChecking to suppress unapproved-verb warnings
 Import-Module Az.Network -DisableNameChecking -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
 
-# Get all subs for the signed-in account (tenant already chosen by Az UI)
-$subscriptions = Get-AzSubscription -WarningAction SilentlyContinue |
+# Get all subs scoped to the authenticated tenant — prevents token errors for other tenants
+$tenantId = $ctx.Tenant.Id
+$subscriptions = Get-AzSubscription -TenantId $tenantId -WarningAction SilentlyContinue |
     Where-Object { $_.State -in @('Enabled', 'Warned') } |
     Sort-Object Name
 
@@ -230,7 +232,6 @@ if (-not $subscriptions) {
     throw "No subscriptions found for the current login."
 }
 
-$tenantId   = $subscriptions[0].TenantId
 $runTimeUtc = (Get-Date).ToUniversalTime().ToString("yyyy-MM-dd HH:mm:ss")
 $userName   = $ctx.Account.Id
 
