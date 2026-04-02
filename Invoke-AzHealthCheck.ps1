@@ -325,7 +325,7 @@ foreach ($sub in $subscriptions) {
     [int]$vmHighCpuSub         = 0
 
     #-------------------------
-    # Governance – RGs without locks
+    # Governance - RGs without locks
     #-------------------------
     $rgList     = Get-AzResourceGroup
     $rgTotalSub = $rgList.Count
@@ -356,7 +356,7 @@ foreach ($sub in $subscriptions) {
     }
 
     #-------------------------
-    # Compute – VMs (backup + legacy disks + v1.0.6 CPU p95)
+    # Compute - VMs (backup + legacy disks + v1.0.6 CPU p95)
     #-------------------------
     $vmList     = Get-AzVM -Status -ErrorAction SilentlyContinue
     $vmTotalSub = $vmList.Count
@@ -398,7 +398,7 @@ foreach ($sub in $subscriptions) {
     $cpuEnd   = Get-Date
     $cpuStart = $cpuEnd.AddDays(-7)
 
-    Write-Info ("Fetching CPU metrics for {0} VM(s) (one API call per VM — may take a moment)…" -f $vmList.Count)
+    Write-Info ("Fetching CPU metrics for {0} VM(s) (one API call per VM -- may take a moment)..." -f $vmList.Count)
     foreach ($vm in $vmList) {
         $vmName   = $vm.Name
         $rgName   = $vm.ResourceGroupName
@@ -462,7 +462,7 @@ foreach ($sub in $subscriptions) {
         }
 
         # v1.0.6 - CPU high check (P95 over last 7 days)
-        # Note: one metrics API call per VM — can be slow in large estates.
+        # Note: one metrics API call per VM -- can be slow in large estates.
         try {
             if ($vm.Id) {
                 $metric = Get-AzMetric `
@@ -503,7 +503,7 @@ foreach ($sub in $subscriptions) {
                 }
             }
         } catch {
-            Write-Info "WARNING: Could not read CPU metrics for '$vmName' ($rgName) — $_"
+            Write-Info "WARNING: Could not read CPU metrics for '$vmName' ($rgName) -- $_"
         }
     }
 
@@ -522,7 +522,7 @@ foreach ($sub in $subscriptions) {
     }
 
     #-------------------------
-    # Compute – Unattached disks
+    # Compute - Unattached disks
     #-------------------------
     $disks = Get-AzDisk -ErrorAction SilentlyContinue
     foreach ($disk in $disks) {
@@ -540,7 +540,7 @@ foreach ($sub in $subscriptions) {
     }
 
     #-------------------------
-    # Compute – Unattached Public IPs
+    # Compute - Unattached Public IPs
     #-------------------------
     $pips = Get-AzPublicIpAddress -ErrorAction SilentlyContinue
     foreach ($pip in $pips) {
@@ -559,7 +559,7 @@ foreach ($sub in $subscriptions) {
     }
 
     #-------------------------
-    # Storage accounts – TLS, public access, soft delete, replication
+    # Storage accounts - TLS, public access, soft delete, replication
     #-------------------------
     $storageAccounts = Get-AzStorageAccount -ErrorAction SilentlyContinue
     $storageTotalSub = $storageAccounts.Count
@@ -622,7 +622,7 @@ foreach ($sub in $subscriptions) {
     }
 
     #-------------------------
-    # Key Vault – config & expiring objects
+    # Key Vault - config & expiring objects
     #-------------------------
     $kvList = Get-AzKeyVault -ErrorAction SilentlyContinue
     $now    = Get-Date
@@ -710,7 +710,7 @@ foreach ($sub in $subscriptions) {
     }
 
     #-------------------------
-    # Network – NSG coverage & exposed ports
+    # Network - NSG coverage & exposed ports
     #-------------------------
     $vNets = Get-AzVirtualNetwork -ErrorAction SilentlyContinue
     foreach ($vnet in $vNets) {
@@ -1033,7 +1033,7 @@ $securityMetrics = @(
     [pscustomobject]@{ Name = 'NICs without NSG';                             Value = $totalNicsNoNsg }
     [pscustomobject]@{ Name = 'NSG rules exposing RDP/SSH';                   Value = $totalNsgOpenRules }
     [pscustomobject]@{ Name = 'Key Vaults without purge protection';          Value = $totalKvNoPurge }
-    [pscustomobject]@{ Name = 'KV objects expiring ≤60 days';                 Value = $totalKvExpiring60 }
+    [pscustomobject]@{ Name = 'KV objects expiring <=60 days';                 Value = $totalKvExpiring60 }
     [pscustomobject]@{ Name = 'Activity Log diagnostics not configured';      Value = $totalActivityLogNoDiag }
     [pscustomobject]@{ Name = 'SQL instances (inventory)';                    Value = $totalSqlInstances }
     [pscustomobject]@{ Name = 'Azure Policy assignments (inventory)';         Value = $totalPolicyAssignments }
