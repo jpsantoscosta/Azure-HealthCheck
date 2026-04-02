@@ -1,6 +1,6 @@
 <#PSScriptInfo
 
-.VERSION 1.0.6
+.VERSION 1.0.7
 
 .GUID 4129a3f4-6bb2-4dea-9d84-895d5dd2d3b7
 
@@ -32,6 +32,7 @@
     v1.0.4 - Fix formatting and punctuation in health check report
     v1.0.5 - Add checks: Activity Log diagnostic settings (any destination), SQL instances inventory (Azure SQL, Managed Instance, SQL on VM), and Azure Policy assignments inventory
     v1.0.6 - Security: HTML-encode table output to mitigate XSS; Reliability: make Policy assignment parsing forward-compatible + suppress Az.Policy breaking-change warning; Add compute check: VMs with high CPU (P95 over last 7 days)
+    v1.0.7 - Fix: replace all non-ASCII characters (en/em dashes, ellipsis, <= symbol) with ASCII equivalents for PS Gallery compatibility
 #>
 
 [CmdletBinding()]
