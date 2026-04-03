@@ -3,7 +3,7 @@ name: Publish to PowerShell Gallery
 on:
   push:
     tags:
-      - 'v*'   # v1.0.0, v1.1.0, etc.
+      - 'v*'   # stable: v1.0.0  |  pre-release: v1.0.0-beta1
 
 jobs:
   publish:
@@ -20,6 +20,24 @@ jobs:
           Get-Location
           Write-Host "Files:"
           Get-ChildItem -Recurse
+
+      - name: Parse tag for pre-release
+        id: tag
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}"
+          if ($tag -match '^v(\d+\.\d+\.\d+)-([a-zA-Z0-9]+)$') {
+            $prerelease = $Matches[2]
+            # Inject pre-release string into PSScriptInfo block
+            $content = Get-Content './Invoke-AzHealthCheck.ps1' -Raw
+            $content = $content -replace '(?m)^\.PRERELEASESTRING\s*$', ".PRERELEASESTRING $prerelease"
+            Set-Content './Invoke-AzHealthCheck.ps1' -Value $content -NoNewline
+            Write-Host "Pre-release build: $prerelease"
+            echo "is_prerelease=true" >> $env:GITHUB_OUTPUT
+          } else {
+            Write-Host "Stable build"
+            echo "is_prerelease=false" >> $env:GITHUB_OUTPUT
+          }
 
       - name: Install PowerShellGet
         shell: pwsh
@@ -41,10 +59,12 @@ jobs:
         uses: actions/github-script@v7
         with:
           script: |
+            const isPrerelease = '${{ steps.tag.outputs.is_prerelease }}' === 'true';
             await github.rest.repos.createRelease({
               owner: context.repo.owner,
               repo: context.repo.repo,
               tag_name: context.ref.replace('refs/tags/', ''),
               name: context.ref.replace('refs/tags/', ''),
-              generate_release_notes: true
+              generate_release_notes: true,
+              prerelease: isPrerelease
             });

@@ -2,7 +2,9 @@
 
 .VERSION 1.0.9
 
-.GUID 4129a3f4-6bb2-4dea-9d84-895d5dd2d3b7
+.PRERELEASESTRING
+
+.GUID4129a3f4-6bb2-4dea-9d84-895d5dd2d3b7
 
 .AUTHOR Joao Paulo Costa
 
