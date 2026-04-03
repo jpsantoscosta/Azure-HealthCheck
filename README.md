@@ -115,9 +115,29 @@ The script is read-only and does not modify any resources.
 
 ## 📝 Roadmap
 
-- Add filters for regions, categories and subscriptions
-- Add PDF export
-- Add dark mode UI for HTML report
+### 🔒 Security
+- Defender for Cloud coverage — VMs/subscriptions without Microsoft Defender plans enabled
+- Public-facing resources — App Services, Storage, SQL with public network access enabled
+- Privileged Identity — permanent Owner/Contributor assignments without PIM
+- Managed Identity gaps — VMs/App Services still using service principal passwords
+- Entra ID guest users — subscriptions with high numbers of guests with elevated roles
+
+### 💰 Cost
+- Stopped (deallocated) VMs — off for >30 days, still incurring disk costs
+- Undersized/idle VMs — VMs running at <5% avg CPU (complement to the existing high CPU check)
+- Old snapshots — disk snapshots older than 90 days
+
+### 📋 Compliance
+- Diagnostic settings on resources — Key Vaults, Storage Accounts, NSGs missing diagnostics
+- Resource tagging gaps — resources missing required tags (configurable tag names as parameters)
+- Azure Advisor integration — pull high/medium severity recommendations into the report
+
+### 🛠 Usability
+- Email report — send the HTML report via SendGrid/SMTP after generation
+- Dark mode UI for HTML report
+- Scheduled run via Azure Automation — runbook wrapper to save reports to Blob Storage on a schedule
+- PDF export
+- Comparison mode — diff two reports to highlight what's new or fixed since the last run
 
 ---
 
