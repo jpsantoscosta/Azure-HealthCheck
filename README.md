@@ -120,6 +120,8 @@ The script is read-only and does not modify any resources.
 | Key Vault expiry metadata | Key Vault Secrets User (or custom: `secrets/read`, `keys/read`, `certificates/read`) |
 | Recovery Services Vault (backup items) | Reader (or Backup Reader in restricted tenants) |
 | CPU metrics | Monitoring Reader (or `Microsoft.Insights/metrics/read`) |
+| Defender for Cloud plans (`Get-AzSecurityPricing`) | Reader (covers `Microsoft.Security/pricings/read`) |
+| Policy assignments / audit logging | Reader (covers `Microsoft.Authorization/policyAssignments/read`) |
 
 ---
 
