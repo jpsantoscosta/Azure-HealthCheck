@@ -1,6 +1,6 @@
 <#PSScriptInfo
 
-.VERSION 1.1.0
+.VERSION 1.2.0
 
 .PRERELEASESTRING
 
@@ -38,6 +38,7 @@
     v1.0.8 - Suppress Az module warnings: Get-AzSubscription tenant auth, Get-AzMetric DetailedOutput deprecation, Get-AzDiagnosticSetting breaking-change, Az.Network unapproved-verb noise
     v1.0.9 - Fix tenant auth warning properly: scope Get-AzSubscription to the authenticated tenant via -TenantId from Get-AzContext
     v1.1.0 - Add checks: Defender for Cloud plan coverage (Standard vs Free), stopped VMs (OS-stopped but not deallocated -- still incurring compute charges), and resource tagging gaps (RGs and VMs with no tags, or missing required tags via -RequiredTags param)
+    v1.2.0 - Security: public-facing resources (App Services, Storage Accounts, and SQL servers/Managed Instances with public network access enabled) and privileged identity (permanent Owner/Contributor role assignments for users and groups that should be managed via PIM)
 #>
 
 [CmdletBinding()]
@@ -283,6 +284,11 @@ $defenderResults   = @()  # Defender for Cloud plan coverage
 $vmStoppedResults  = @()  # VMs in OS-stopped state (still incurring compute charges)
 $taggingGapResults = @()  # RGs and VMs with missing/no tags
 
+# v1.2.0
+$publicAppServiceResults = @()  # App Services with public network access enabled
+$publicSqlResults        = @()  # SQL logical servers and MIs with public network access enabled
+$privIdentityResults     = @()  # Permanent Owner/Contributor assignments for users/groups (no PIM)
+
 [int]$totalRgAll      = 0
 [int]$totalVmAll      = 0
 [int]$totalStorageAll = 0
@@ -308,7 +314,9 @@ function Get-SubScore {
         [int]$ActivityLogNoDiag,
         [int]$DefenderFreePlans,
         [int]$VmStopped,
-        [int]$TaggingGaps
+        [int]$TaggingGaps,
+        [int]$PublicFacingCount,
+        [int]$PrivIdentityCount
     )
 
     $score = 100
@@ -328,6 +336,10 @@ function Get-SubScore {
     $score -= [math]::Min(15, $DefenderFreePlans * 2)
     $score -= [math]::Min(10, $VmStopped * 2)
     $score -= [math]::Min(5,  [int]([math]::Ceiling($TaggingGaps / 10.0)))
+
+    # v1.2.0
+    $score -= [math]::Min(15, $PublicFacingCount * 2)
+    $score -= [math]::Min(20, $PrivIdentityCount * 5)
 
     if ($score -lt 0)   { $score = 0 }
     if ($score -gt 100) { $score = 100 }
@@ -360,6 +372,8 @@ foreach ($sub in $subscriptions) {
     [int]$defenderFreeSub      = 0
     [int]$vmStoppedSub         = 0
     [int]$taggingGapsSub       = 0
+    [int]$publicFacingSub      = 0
+    [int]$privIdentitySub      = 0
 
     #-------------------------
     # Governance - RGs without locks
@@ -1027,6 +1041,105 @@ foreach ($sub in $subscriptions) {
     }
 
     #-------------------------
+    # v1.2.0 - Public-facing App Services
+    #-------------------------
+    $webApps = @()
+    try { $webApps = Get-AzWebApp -ErrorAction SilentlyContinue } catch { $webApps = @() }
+
+    foreach ($app in @($webApps)) {
+        $pna = $null
+        try { $pna = $app.PublicNetworkAccess } catch { }
+
+        # Flag if NOT explicitly disabled (default = publicly accessible)
+        if ($pna -ne 'Disabled') {
+            $publicFacingSub++
+            $publicAppServiceResults += [pscustomobject]@{
+                SubscriptionId       = $sid
+                SubscriptionName     = $sname
+                ResourceGroup        = $app.ResourceGroup
+                AppServiceName       = $app.Name
+                Location             = $app.Location
+                Kind                 = $app.Kind
+                PublicNetworkAccess  = if ($pna) { $pna } else { 'Enabled (default)' }
+                IsRisk               = $true
+            }
+        }
+    }
+
+    #-------------------------
+    # v1.2.0 - Public-facing SQL (logical servers + Managed Instances)
+    #-------------------------
+    $sqlPublicTypes = @(
+        @{ Type = 'Microsoft.Sql/servers';           PropName = 'publicNetworkAccess';      IsEnabled = { param($v) $v -ne 'Disabled' } }
+        @{ Type = 'Microsoft.Sql/managedInstances';  PropName = 'publicDataEndpointEnabled'; IsEnabled = { param($v) $v -eq $true -or $v -eq 'true' } }
+    )
+
+    foreach ($entry in $sqlPublicTypes) {
+        $sqlRes = @()
+        try { $sqlRes = Get-AzResource -ResourceType $entry.Type -ExpandProperties -ErrorAction SilentlyContinue } catch { $sqlRes = @() }
+
+        foreach ($r in @($sqlRes)) {
+            $propVal = $null
+            try {
+                if ($r.Properties -and $r.Properties.PSObject.Properties.Name -contains $entry.PropName) {
+                    $propVal = $r.Properties.($entry.PropName)
+                }
+            } catch { }
+
+            if (& $entry.IsEnabled $propVal) {
+                $publicFacingSub++
+                $publicSqlResults += [pscustomobject]@{
+                    SubscriptionId      = $sid
+                    SubscriptionName    = $sname
+                    ResourceGroup       = $r.ResourceGroupName
+                    ResourceType        = $entry.Type
+                    Name                = $r.Name
+                    Location            = $r.Location
+                    PublicNetworkAccess = if ($null -ne $propVal) { [string]$propVal } else { 'Enabled (default)' }
+                    IsRisk              = $true
+                }
+            }
+        }
+    }
+
+    #-------------------------
+    # v1.2.0 - Privileged Identity: permanent Owner/Contributor for users/groups (should use PIM)
+    #-------------------------
+    $roleAssignments = @()
+    try {
+        $roleAssignments = Get-AzRoleAssignment -Scope $subResourceId -ErrorAction SilentlyContinue -WarningAction SilentlyContinue
+    } catch { $roleAssignments = @() }
+
+    foreach ($ra in @($roleAssignments)) {
+        $roleDefName = $null
+        $objectType  = $null
+        $principalId = $null
+        $principalName = $null
+        $scopeVal    = $null
+
+        try { $roleDefName  = $ra.RoleDefinitionName } catch { }
+        try { $objectType   = $ra.ObjectType }         catch { }
+        try { $principalId  = $ra.ObjectId }           catch { }
+        try { $principalName = $ra.DisplayName }       catch { }
+        try { $scopeVal     = $ra.Scope }              catch { }
+
+        if ($roleDefName -notin @('Owner', 'Contributor')) { continue }
+        if ($objectType -notin @('User', 'Group'))          { continue }
+
+        $privIdentitySub++
+        $privIdentityResults += [pscustomobject]@{
+            SubscriptionId   = $sid
+            SubscriptionName = $sname
+            PrincipalName    = $principalName
+            PrincipalType    = $objectType
+            PrincipalId      = $principalId
+            Role             = $roleDefName
+            Scope            = $scopeVal
+            IsRisk           = $true
+        }
+    }
+
+    #-------------------------
     # Aggregate per-subscription stats
     #-------------------------
     $rgWithoutLocks   = ($govResults     | Where-Object { $_.SubscriptionId -eq $sid } | Measure-Object).Count
@@ -1052,7 +1165,8 @@ foreach ($sub in $subscriptions) {
         $kvWithoutPurgeSub + $kvExpiring60Sub +
         $activityLogNoDiagSub +
         $vmHighCpuSub +
-        $defenderFreeSub + $vmStoppedSub + $taggingGapsSub
+        $defenderFreeSub + $vmStoppedSub + $taggingGapsSub +
+        $publicFacingSub + $privIdentitySub
     ) -gt 0
 
     $score = Get-SubScore `
@@ -1062,7 +1176,8 @@ foreach ($sub in $subscriptions) {
         -SubnetsNoNsg $subnetsNoNsgSub -NicsNoNsg $nicsNoNsgSub -NsgOpenMgmtRules $openMgmtRulesSub `
         -KeyVaultsNoPurge $kvWithoutPurgeSub -KvSecretsExpiring60 $kvExpiring60Sub `
         -ActivityLogNoDiag $activityLogNoDiagSub `
-        -DefenderFreePlans $defenderFreeSub -VmStopped $vmStoppedSub -TaggingGaps $taggingGapsSub
+        -DefenderFreePlans $defenderFreeSub -VmStopped $vmStoppedSub -TaggingGaps $taggingGapsSub `
+        -PublicFacingCount $publicFacingSub -PrivIdentityCount $privIdentitySub
 
     $subStats += [pscustomobject]@{
         Id                   = $sid
@@ -1091,6 +1206,8 @@ foreach ($sub in $subscriptions) {
         DefenderFree         = $defenderFreeSub
         VmStopped            = $vmStoppedSub
         TaggingGaps          = $taggingGapsSub
+        PublicFacing         = $publicFacingSub
+        PrivIdentity         = $privIdentitySub
     }
 
     $totalRgAll      += $rgTotalSub
@@ -1160,6 +1277,13 @@ $totalDefenderFree  = ($defenderResults   | Where-Object { $_.IsRisk } | Measure
 $totalVmStopped     = ($vmStoppedResults  | Measure-Object).Count
 $totalTaggingGaps   = ($taggingGapResults | Measure-Object).Count
 
+# v1.2.0
+$totalPublicAppServices = ($publicAppServiceResults | Measure-Object).Count
+$totalPublicSql         = ($publicSqlResults        | Measure-Object).Count
+$totalPublicFacing      = $totalPublicAppServices + $totalPublicSql +
+                          ($storageResults | Where-Object { $_.PublicNetworkAccess -eq 'Allow' } | Measure-Object).Count
+$totalPrivIdentity      = ($privIdentityResults | Measure-Object).Count
+
 $securityMetrics = @(
     [pscustomobject]@{ Name = 'Unattached Public IPs';                        Value = ($pipResults | Measure-Object).Count }
     [pscustomobject]@{ Name = 'Unattached disks';                             Value = ($diskResults | Measure-Object).Count }
@@ -1180,6 +1304,8 @@ $securityMetrics = @(
     [pscustomobject]@{ Name = 'Defender for Cloud plans on Free tier';        Value = $totalDefenderFree }
     [pscustomobject]@{ Name = 'VMs in stopped state (still incurring charges)'; Value = $totalVmStopped }
     [pscustomobject]@{ Name = 'Resources with tagging gaps (RGs + VMs)';      Value = $totalTaggingGaps }
+    [pscustomobject]@{ Name = 'Public-facing resources (App Services + SQL with public network access)'; Value = $totalPublicFacing }
+    [pscustomobject]@{ Name = 'Permanent Owner/Contributor assignments (users/groups without PIM)'; Value = $totalPrivIdentity }
 )
 
 $maxMetric = ($securityMetrics.Value | Measure-Object -Maximum).Maximum
@@ -1191,7 +1317,8 @@ $topSubs = $subStats | ForEach-Object {
               $_.SubnetsNoNsg + $_.NicsNoNsg + $_.NsgOpenMgmtRules +
               $_.KeyVaultsNoPurge + $_.KvSecretsExpiring60 +
               $_.ActivityLogNoDiag +
-              $_.DefenderFree + $_.VmStopped + $_.TaggingGaps
+              $_.DefenderFree + $_.VmStopped + $_.TaggingGaps +
+              $_.PublicFacing + $_.PrivIdentity
 
     [pscustomobject]@{
         Name   = $_.Name
@@ -1215,6 +1342,8 @@ $categoryBreakdown = @(
     [pscustomobject]@{ Category = 'Defender';    Count = ($defenderResults | Where-Object { $_.IsRisk } | Measure-Object).Count }
     [pscustomobject]@{ Category = 'StoppedVMs';  Count = $totalVmStopped }
     [pscustomobject]@{ Category = 'Tagging';     Count = $totalTaggingGaps }
+    [pscustomobject]@{ Category = 'PublicAccess'; Count = $totalPublicFacing }
+    [pscustomobject]@{ Category = 'PrivIdentity'; Count = $totalPrivIdentity }
 ) | Where-Object { $_.Count -gt 0 }
 
 $categoryJson = ($categoryBreakdown | ConvertTo-Json -Compress) -replace '</script>', '<\/script>'
@@ -1234,6 +1363,8 @@ $heatMapRows = foreach ($s in $subStats) {
         Defender     = [int]$s.DefenderFree
         StoppedVMs   = [int]$s.VmStopped
         Tagging      = [int]$s.TaggingGaps
+        PublicAccess = [int]$s.PublicFacing
+        PrivIdentity = [int]$s.PrivIdentity
     }
 }
 
@@ -1623,6 +1754,8 @@ $header = @"
     <li><strong>Defender for Cloud</strong> - Defender plan coverage per subscription (Standard vs Free). Free tier means the workload is not actively monitored by Defender.</li>
     <li><strong>Stopped VMs</strong> - Virtual Machines in OS-stopped state (not deallocated). These still incur compute charges.</li>
     <li><strong>Resource Tagging</strong> - Resource groups and VMs with no tags (or missing required tags if -RequiredTags is specified).</li>
+    <li><strong>Public-facing Resources</strong> - App Services, Storage Accounts, and SQL servers/Managed Instances with public network access not explicitly disabled.</li>
+    <li><strong>Privileged Identity</strong> - Permanent Owner/Contributor role assignments for users and groups that should be managed via PIM instead of direct assignment.</li>
   </ul>
 </div>
 "@)
@@ -1747,9 +1880,13 @@ foreach ($sub in $subscriptions) {
     $sqlSub        = $sqlInstanceResults      | Where-Object { $_.SubscriptionId -eq $sid }
     $policySub     = $policyAssignmentResults | Where-Object { $_.SubscriptionId -eq $sid }
 
-    $defenderSub      = $defenderResults   | Where-Object { $_.SubscriptionId -eq $sid }
-    $vmStoppedSub2    = $vmStoppedResults  | Where-Object { $_.SubscriptionId -eq $sid }
-    $taggingGapSub    = $taggingGapResults | Where-Object { $_.SubscriptionId -eq $sid }
+    $defenderSub      = $defenderResults        | Where-Object { $_.SubscriptionId -eq $sid }
+    $vmStoppedSub2    = $vmStoppedResults       | Where-Object { $_.SubscriptionId -eq $sid }
+    $taggingGapSub    = $taggingGapResults      | Where-Object { $_.SubscriptionId -eq $sid }
+    $publicAppSub     = $publicAppServiceResults | Where-Object { $_.SubscriptionId -eq $sid }
+    $publicSqlSub     = $publicSqlResults        | Where-Object { $_.SubscriptionId -eq $sid }
+    $publicStorageSub = $storageResults          | Where-Object { $_.SubscriptionId -eq $sid -and $_.PublicNetworkAccess -eq 'Allow' }
+    $privIdentitySub2 = $privIdentityResults     | Where-Object { $_.SubscriptionId -eq $sid }
 
     $stats         = $subStats | Where-Object { $_.Id -eq $sid }
 
@@ -1784,9 +1921,14 @@ foreach ($sub in $subscriptions) {
     $vmCpuSubDisplay = $vmCpuSub | Select-Object `
         SubscriptionId, SubscriptionName, ResourceGroup, VMName, Location, CpuAvg7d, CpuP95_7d, CpuMaxSample7d, Threshold, IsRisk
 
-    $defenderSubDisplay    = $defenderSub   | Select-Object SubscriptionId, SubscriptionName, PlanName, Tier, IsRisk
-    $vmStoppedSubDisplay   = $vmStoppedSub2 | Select-Object SubscriptionId, SubscriptionName, ResourceGroup, VMName, Location, PowerState
-    $taggingGapSubDisplay  = $taggingGapSub | Select-Object SubscriptionId, SubscriptionName, ResourceType, ResourceGroup, ResourceName, Location, MissingTags
+    $defenderSubDisplay    = $defenderSub    | Select-Object SubscriptionId, SubscriptionName, PlanName, Tier, IsRisk
+    $vmStoppedSubDisplay   = $vmStoppedSub2  | Select-Object SubscriptionId, SubscriptionName, ResourceGroup, VMName, Location, PowerState
+    $taggingGapSubDisplay  = $taggingGapSub  | Select-Object SubscriptionId, SubscriptionName, ResourceType, ResourceGroup, ResourceName, Location, MissingTags
+
+    $publicAppSubDisplay     = $publicAppSub     | Select-Object SubscriptionId, SubscriptionName, ResourceGroup, AppServiceName, Location, Kind, PublicNetworkAccess
+    $publicSqlSubDisplay     = $publicSqlSub     | Select-Object SubscriptionId, SubscriptionName, ResourceGroup, ResourceType, Name, Location, PublicNetworkAccess
+    $publicStorageSubDisplay = $publicStorageSub | Select-Object SubscriptionId, SubscriptionName, ResourceGroup, StorageAccountName, Location, Kind, PublicNetworkAccess
+    $privIdentitySubDisplay  = $privIdentitySub2 | Select-Object SubscriptionId, SubscriptionName, PrincipalName, PrincipalType, PrincipalId, Role, Scope
 
     $sidSafe = SafeHtmlId -Id $sid
 
@@ -1811,6 +1953,11 @@ foreach ($sub in $subscriptions) {
     $vmStoppedHtml    = New-TableHtml -Data $vmStoppedSubDisplay  -Id "vstop-$sidSafe"  -Title "Compute - VMs in stopped state (not deallocated)"
     $taggingGapHtml   = New-TableHtml -Data $taggingGapSubDisplay -Id "tag-$sidSafe"    -Title "Tagging gaps - resource groups and VMs"
 
+    $publicAppHtml     = New-TableHtml -Data $publicAppSubDisplay     -Id "pubapp-$sidSafe"   -Title "Security - App Services with public network access enabled"
+    $publicSqlHtml     = New-TableHtml -Data $publicSqlSubDisplay     -Id "pubsql-$sidSafe"   -Title "Security - SQL servers/Managed Instances with public network access enabled"
+    $publicStorageHtml = New-TableHtml -Data $publicStorageSubDisplay -Id "pubstg-$sidSafe"   -Title "Security - Storage Accounts with no network firewall (DefaultAction: Allow)"
+    $privIdentityHtml  = New-TableHtml -Data $privIdentitySubDisplay  -Id "privid-$sidSafe"   -Title "Security - Permanent Owner/Contributor assignments (users/groups without PIM)"
+
     # ---- v1.0.6+ UI note: metrics disclaimer under CPU table ----
     $cpuNote = "Note: CPU metrics may be missing for some VMs if Azure Monitor metrics are not available/disabled, the VM was recently created, the VM was deallocated for long periods, or you don't have permission to read metrics. Missing metrics are not treated as a failure by this report."
     $vmCpuHtml = $vmCpuHtml + (New-NoteHtml -Text $cpuNote)
@@ -1820,6 +1967,18 @@ foreach ($sub in $subscriptions) {
 
     $taggingNote = "Note: Only resource groups and virtual machines are checked for tagging gaps. Use -RequiredTags to specify required tag names; if omitted, resources with no tags at all are reported."
     $taggingGapHtml = $taggingGapHtml + (New-NoteHtml -Text $taggingNote)
+
+    $publicAppNote = "Note: App Services listed here have PublicNetworkAccess not explicitly set to 'Disabled'. This means they may be reachable from the public internet. Consider enabling access restrictions or VNet integration."
+    $publicAppHtml = $publicAppHtml + (New-NoteHtml -Text $publicAppNote)
+
+    $publicSqlNote = "Note: SQL logical servers where publicNetworkAccess is not Disabled, and Managed Instances where publicDataEndpointEnabled is true, are listed here."
+    $publicSqlHtml = $publicSqlHtml + (New-NoteHtml -Text $publicSqlNote)
+
+    $publicStorageNote = "Note: Storage Accounts where the network firewall default action is 'Allow' (no IP or VNet rules applied) are listed here. This is separate from blob-level public access."
+    $publicStorageHtml = $publicStorageHtml + (New-NoteHtml -Text $publicStorageNote)
+
+    $privIdentityNote = "Note: Only permanent direct role assignments for users and groups are returned here. PIM-eligible (not yet activated) assignments do not appear as permanent assignments and are not listed. Service principals and managed identities are excluded."
+    $privIdentityHtml = $privIdentityHtml + (New-NoteHtml -Text $privIdentityNote)
 
     $issueFlag = if ($hasIssue) { 1 } else { 0 }
 
@@ -1855,6 +2014,10 @@ foreach ($sub in $subscriptions) {
     [void]$htmlSb.AppendLine($defenderHtml)
     [void]$htmlSb.AppendLine($vmStoppedHtml)
     [void]$htmlSb.AppendLine($taggingGapHtml)
+    [void]$htmlSb.AppendLine($publicAppHtml)
+    [void]$htmlSb.AppendLine($publicSqlHtml)
+    [void]$htmlSb.AppendLine($publicStorageHtml)
+    [void]$htmlSb.AppendLine($privIdentityHtml)
 
     [void]$htmlSb.AppendLine("</div>")
 }
@@ -2051,7 +2214,7 @@ document.addEventListener('DOMContentLoaded', function () {
     var ctxH = heatCanvas.getContext('2d');
 
     // Keep heatmap focused on risk categories (exclude SQL/Policy inventory)
-    var categories = ['Governance','Backup','Compute','Storage','Network','KeyVault','ActivityLog'];
+    var categories = ['Governance','Backup','Compute','Storage','Network','KeyVault','ActivityLog','PublicAccess','PrivIdentity'];
     var subs = heatMapData.map(function (r) { return r.Subscription; });
 
     function countToSeverity(count) {
