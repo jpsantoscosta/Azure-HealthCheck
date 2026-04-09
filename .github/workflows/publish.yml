@@ -8,6 +8,8 @@ on:
 jobs:
   publish:
     runs-on: windows-latest
+    permissions:
+      contents: write   # required to create GitHub Releases
 
     steps:
       - name: Checkout
@@ -39,20 +41,20 @@ jobs:
             echo "is_prerelease=false" >> $env:GITHUB_OUTPUT
           }
 
-      - name: Install PowerShellGet
+      - name: Install PSResourceGet
         shell: pwsh
         run: |
-          Install-Module PowerShellGet -Force -Scope CurrentUser
-          Import-Module PowerShellGet
+          Install-Module Microsoft.PowerShell.PSResourceGet -Force -Scope CurrentUser
+          Import-Module Microsoft.PowerShell.PSResourceGet
 
       - name: Publish Azure Health Check script
         shell: pwsh
         env:
           NUGET_API_KEY: ${{ secrets.PSGALLERY_API_KEY }}
         run: |
-          Publish-Script `
+          Publish-PSResource `
             -Path './Invoke-AzHealthCheck.ps1' `
-            -NuGetApiKey $env:NUGET_API_KEY `
+            -ApiKey $env:NUGET_API_KEY `
             -Repository PSGallery
 
       - name: Create GitHub Release

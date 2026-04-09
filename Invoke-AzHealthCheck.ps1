@@ -226,8 +226,17 @@ if (-not $ctx) {
     $ctx = Get-AzContext -ErrorAction Stop
 }
 
-# Pre-import Az.Network with -DisableNameChecking to suppress unapproved-verb warnings
-Import-Module Az.Network -DisableNameChecking -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
+# Az.Network wraps Microsoft.Azure.PowerShell.Cmdlets.Network, which contains cmdlets
+# with non-standard verb names. Pre-loading it with -DisableNameChecking (the documented
+# PowerShell mechanism for acknowledging known non-standard verbs) prevents the warning
+# from appearing when the sub-module is auto-loaded the first time a network cmdlet runs.
+$_netCmdletsModule = Get-Module -ListAvailable -Name 'Microsoft.Azure.PowerShell.Cmdlets.Network*' |
+    Sort-Object Version -Descending | Select-Object -First 1
+if ($_netCmdletsModule) {
+    Import-Module $_netCmdletsModule.Name -DisableNameChecking -ErrorAction SilentlyContinue
+}
+Remove-Variable _netCmdletsModule -ErrorAction SilentlyContinue
+Import-Module Az.Network -DisableNameChecking -ErrorAction SilentlyContinue
 
 # Get all subs scoped to the authenticated tenant -- prevents token errors for other tenants
 $tenantId = $ctx.Tenant.Id
