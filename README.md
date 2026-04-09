@@ -23,6 +23,7 @@ It analyses common governance gaps, security misconfigurations, compute/storage/
 - **VMs with high CPU** — flags VMs whose P95 CPU utilisation (hourly average over 7 days) exceeds the threshold (default 80%)
 - Unattached disks
 - Unattached Public IPs
+- **Stopped VMs** — VMs in OS-stopped state (not deallocated). These still incur compute charges.
 
 ### **✔ Storage Accounts**
 - TLS version issues (TLS 1.0 / 1.1)
@@ -52,6 +53,14 @@ It analyses common governance gaps, security misconfigurations, compute/storage/
 ### **✔ Azure Policy**
 - Inventory of all Policy assignments at subscription scope
 - Shows display name, scope, and policy definition ID
+
+### **✔ Defender for Cloud**
+- Defender plan coverage per subscription (Standard vs Free)
+- Free tier means the workload is not actively monitored by Defender
+
+### **✔ Resource Tagging**
+- Resource groups and VMs with no tags
+- Or missing required tags if `-RequiredTags` is specified
 
 ---
 
@@ -90,6 +99,7 @@ Invoke-AzHealthCheck -OpenAfterExport
 | `-OpenAfterExport` | Switch | `$false` | Automatically opens the HTML report after generation |
 | `-CpuHighThresholdPercent` | Int | `80` | CPU P95 threshold (%) above which a VM is flagged as high-CPU |
 | `-CpuTopNPerSubscription` | Int | `20` | Maximum number of high-CPU VMs reported per subscription |
+| `-RequiredTags` | String[] | `@()` | List of required tag names to check (e.g. `'Environment','Owner'`). If empty, reports resources with no tags at all |
 
 ### Output location
 
@@ -116,7 +126,6 @@ The script is read-only and does not modify any resources.
 ## 📝 Roadmap
 
 ### 🔒 Security
-- Defender for Cloud coverage — VMs/subscriptions without Microsoft Defender plans enabled
 - Public-facing resources — App Services, Storage, SQL with public network access enabled
 - Privileged Identity — permanent Owner/Contributor assignments without PIM
 - Managed Identity gaps — VMs/App Services still using service principal passwords
@@ -129,7 +138,6 @@ The script is read-only and does not modify any resources.
 
 ### 📋 Compliance
 - Diagnostic settings on resources — Key Vaults, Storage Accounts, NSGs missing diagnostics
-- Resource tagging gaps — resources missing required tags (configurable tag names as parameters)
 - Azure Advisor integration — pull high/medium severity recommendations into the report
 
 ### 🛠 Usability

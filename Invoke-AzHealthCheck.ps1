@@ -1,14 +1,14 @@
 <#PSScriptInfo
 
-.VERSION 1.0.9
+.VERSION 1.1.0
 
 .PRERELEASESTRING
 
-.GUID4129a3f4-6bb2-4dea-9d84-895d5dd2d3b7
+.GUID 4129a3f4-6bb2-4dea-9d84-895d5dd2d3b7
 
 .AUTHOR Joao Paulo Costa
 
-.DESCRIPTION This script generates an Azure Health Check HTML report for: governance, compute, storage, network, Key Vault, Activity Log, SQL inventory, and Azure Policy.
+.DESCRIPTION This script generates an Azure Health Check HTML report for: governance, compute, storage, network, Key Vault, Activity Log, SQL inventory, Azure Policy, Defender for Cloud plan coverage, stopped VMs, and resource tagging gaps.
 
 .COMPANYNAME getpractical.co.uk
 
@@ -37,6 +37,7 @@
     v1.0.7 - Fix: replace all non-ASCII characters (en/em dashes, ellipsis, <= symbol) with ASCII equivalents for PS Gallery compatibility
     v1.0.8 - Suppress Az module warnings: Get-AzSubscription tenant auth, Get-AzMetric DetailedOutput deprecation, Get-AzDiagnosticSetting breaking-change, Az.Network unapproved-verb noise
     v1.0.9 - Fix tenant auth warning properly: scope Get-AzSubscription to the authenticated tenant via -TenantId from Get-AzContext
+    v1.1.0 - Add checks: Defender for Cloud plan coverage (Standard vs Free), stopped VMs (OS-stopped but not deallocated -- still incurring compute charges), and resource tagging gaps (RGs and VMs with no tags, or missing required tags via -RequiredTags param)
 #>
 
 [CmdletBinding()]
@@ -45,7 +46,11 @@ param(
 
     # v1.0.6 - CPU check guardrails
     [int]$CpuHighThresholdPercent = 80,
-    [int]$CpuTopNPerSubscription  = 20
+    [int]$CpuTopNPerSubscription  = 20,
+
+    # v1.1.0 - Tagging gaps: optional list of required tag names to check (e.g. 'Environment','Owner')
+    # If empty, reports resources with NO tags at all.
+    [string[]]$RequiredTags = @()
 )
 
 #=============================
@@ -264,6 +269,11 @@ $policyAssignmentResults = @()
 # v1.0.6
 $vmCpuHighResults = @()  # VMs with high CPU (P95 over last 7 days)
 
+# v1.1.0
+$defenderResults   = @()  # Defender for Cloud plan coverage
+$vmStoppedResults  = @()  # VMs in OS-stopped state (still incurring compute charges)
+$taggingGapResults = @()  # RGs and VMs with missing/no tags
+
 [int]$totalRgAll      = 0
 [int]$totalVmAll      = 0
 [int]$totalStorageAll = 0
@@ -286,7 +296,10 @@ function Get-SubScore {
         [int]$NsgOpenMgmtRules,
         [int]$KeyVaultsNoPurge,
         [int]$KvSecretsExpiring60,
-        [int]$ActivityLogNoDiag
+        [int]$ActivityLogNoDiag,
+        [int]$DefenderFreePlans,
+        [int]$VmStopped,
+        [int]$TaggingGaps
     )
 
     $score = 100
@@ -302,6 +315,10 @@ function Get-SubScore {
 
     # Missing Activity Log diagnostics (any destination) -> small penalty (0 or 10)
     $score -= [math]::Min(10, $ActivityLogNoDiag * 10)
+
+    $score -= [math]::Min(15, $DefenderFreePlans * 2)
+    $score -= [math]::Min(10, $VmStopped * 2)
+    $score -= [math]::Min(5,  [int]([math]::Ceiling($TaggingGaps / 10.0)))
 
     if ($score -lt 0)   { $score = 0 }
     if ($score -gt 100) { $score = 100 }
@@ -331,6 +348,9 @@ foreach ($sub in $subscriptions) {
     [int]$policyAssignSub      = 0
     [int]$activityLogNoDiagSub = 0
     [int]$vmHighCpuSub         = 0
+    [int]$defenderFreeSub      = 0
+    [int]$vmStoppedSub         = 0
+    [int]$taggingGapsSub       = 0
 
     #-------------------------
     # Governance - RGs without locks
@@ -359,6 +379,32 @@ foreach ($sub in $subscriptions) {
                 Location         = $rg.Location
                 LockLevels       = $lockLevels -join ', '
                 LockCount        = $lockCount
+            }
+        }
+
+        # v1.1.0 - Tagging gap check for this RG
+        $missingRgTags = @()
+        if ($RequiredTags.Count -gt 0) {
+            foreach ($tagName in $RequiredTags) {
+                if (-not $rg.Tags -or -not $rg.Tags.ContainsKey($tagName)) {
+                    $missingRgTags += $tagName
+                }
+            }
+        } else {
+            if (-not $rg.Tags -or $rg.Tags.Count -eq 0) {
+                $missingRgTags += '(no tags)'
+            }
+        }
+        if ($missingRgTags.Count -gt 0) {
+            $taggingGapsSub++
+            $taggingGapResults += [pscustomobject]@{
+                SubscriptionId   = $sid
+                SubscriptionName = $sname
+                ResourceType     = 'ResourceGroup'
+                ResourceGroup    = $rg.ResourceGroupName
+                ResourceName     = $rg.ResourceGroupName
+                Location         = $rg.Location
+                MissingTags      = ($missingRgTags -join ', ')
             }
         }
     }
@@ -414,6 +460,48 @@ foreach ($sub in $subscriptions) {
 
         # Backup protection
         $isProtected = $protectedVmNames.Contains($vmName.ToLowerInvariant())
+
+        # v1.1.0 - Stopped VM check (OS-stopped but not deallocated -- still incurring compute charges)
+        $powerState = ''
+        if ($vm.PSObject.Properties.Name -contains 'PowerState') { $powerState = $vm.PowerState }
+        if ($powerState -eq 'VM stopped') {
+            $vmStoppedSub++
+            $vmStoppedResults += [pscustomobject]@{
+                SubscriptionId   = $sid
+                SubscriptionName = $sname
+                ResourceGroup    = $rgName
+                VMName           = $vmName
+                Location         = $location
+                PowerState       = $powerState
+            }
+        }
+
+        # v1.1.0 - Tagging gap check for this VM
+        $missingVmTags = @()
+        if ($RequiredTags.Count -gt 0) {
+            foreach ($tagName in $RequiredTags) {
+                if (-not $vm.Tags -or -not $vm.Tags.ContainsKey($tagName)) {
+                    $missingVmTags += $tagName
+                }
+            }
+        } else {
+            if (-not $vm.Tags -or $vm.Tags.Count -eq 0) {
+                $missingVmTags += '(no tags)'
+            }
+        }
+        if ($missingVmTags.Count -gt 0) {
+            $taggingGapsSub++
+            $taggingGapResults += [pscustomobject]@{
+                SubscriptionId   = $sid
+                SubscriptionName = $sname
+                ResourceType     = 'VirtualMachine'
+                ResourceGroup    = $rgName
+                ResourceName     = $vmName
+                Location         = $location
+                MissingTags      = ($missingVmTags -join ', ')
+            }
+        }
+
         if (-not $isProtected) {
             $vmResults += [pscustomobject]@{
                 SubscriptionId   = $sid
@@ -905,6 +993,31 @@ foreach ($sub in $subscriptions) {
     }
 
     #-------------------------
+    # v1.1.0 - Defender for Cloud plan coverage
+    #-------------------------
+    $defenderPlans = @()
+    try {
+        $defenderPlans = Get-AzSecurityPricing -ErrorAction SilentlyContinue -WarningAction SilentlyContinue
+    } catch { $defenderPlans = @() }
+
+    foreach ($plan in @($defenderPlans)) {
+        $tier = $null
+        if ($plan.PSObject.Properties.Name -contains 'PricingTier') { $tier = $plan.PricingTier }
+        elseif ($plan.PSObject.Properties.Name -contains 'Properties' -and $plan.Properties) { $tier = $plan.Properties.PricingTier }
+
+        $isRisk = ($tier -eq 'Free')
+        if ($isRisk) { $defenderFreeSub++ }
+
+        $defenderResults += [pscustomobject]@{
+            SubscriptionId   = $sid
+            SubscriptionName = $sname
+            PlanName         = $plan.Name
+            Tier             = $tier
+            IsRisk           = $isRisk
+        }
+    }
+
+    #-------------------------
     # Aggregate per-subscription stats
     #-------------------------
     $rgWithoutLocks   = ($govResults     | Where-Object { $_.SubscriptionId -eq $sid } | Measure-Object).Count
@@ -929,7 +1042,8 @@ foreach ($sub in $subscriptions) {
         $subnetsNoNsgSub + $nicsNoNsgSub + $openMgmtRulesSub +
         $kvWithoutPurgeSub + $kvExpiring60Sub +
         $activityLogNoDiagSub +
-        $vmHighCpuSub
+        $vmHighCpuSub +
+        $defenderFreeSub + $vmStoppedSub + $taggingGapsSub
     ) -gt 0
 
     $score = Get-SubScore `
@@ -938,7 +1052,8 @@ foreach ($sub in $subscriptions) {
         -VmHdd $vmHddSub -VmUnmanaged $vmUnmanagedSub -VmHighCpu $vmHighCpuSub `
         -SubnetsNoNsg $subnetsNoNsgSub -NicsNoNsg $nicsNoNsgSub -NsgOpenMgmtRules $openMgmtRulesSub `
         -KeyVaultsNoPurge $kvWithoutPurgeSub -KvSecretsExpiring60 $kvExpiring60Sub `
-        -ActivityLogNoDiag $activityLogNoDiagSub
+        -ActivityLogNoDiag $activityLogNoDiagSub `
+        -DefenderFreePlans $defenderFreeSub -VmStopped $vmStoppedSub -TaggingGaps $taggingGapsSub
 
     $subStats += [pscustomobject]@{
         Id                   = $sid
@@ -964,6 +1079,9 @@ foreach ($sub in $subscriptions) {
         ActivityLogNoDiag    = $activityLogNoDiagSub
         SqlInstances         = $sqlInstancesSub
         PolicyAssignments    = $policyAssignSub
+        DefenderFree         = $defenderFreeSub
+        VmStopped            = $vmStoppedSub
+        TaggingGaps          = $taggingGapsSub
     }
 
     $totalRgAll      += $rgTotalSub
@@ -1029,6 +1147,10 @@ $totalActivityLogNoDiag = ($activityLogDiagResults | Where-Object { -not $_.Diag
 $totalSqlInstances      = ($sqlInstanceResults     | Measure-Object).Count
 $totalPolicyAssignments = ($policyAssignmentResults| Measure-Object).Count
 
+$totalDefenderFree  = ($defenderResults   | Where-Object { $_.IsRisk } | Measure-Object).Count
+$totalVmStopped     = ($vmStoppedResults  | Measure-Object).Count
+$totalTaggingGaps   = ($taggingGapResults | Measure-Object).Count
+
 $securityMetrics = @(
     [pscustomobject]@{ Name = 'Unattached Public IPs';                        Value = ($pipResults | Measure-Object).Count }
     [pscustomobject]@{ Name = 'Unattached disks';                             Value = ($diskResults | Measure-Object).Count }
@@ -1046,6 +1168,9 @@ $securityMetrics = @(
     [pscustomobject]@{ Name = 'Activity Log diagnostics not configured';      Value = $totalActivityLogNoDiag }
     [pscustomobject]@{ Name = 'SQL instances (inventory)';                    Value = $totalSqlInstances }
     [pscustomobject]@{ Name = 'Azure Policy assignments (inventory)';         Value = $totalPolicyAssignments }
+    [pscustomobject]@{ Name = 'Defender for Cloud plans on Free tier';        Value = $totalDefenderFree }
+    [pscustomobject]@{ Name = 'VMs in stopped state (still incurring charges)'; Value = $totalVmStopped }
+    [pscustomobject]@{ Name = 'Resources with tagging gaps (RGs + VMs)';      Value = $totalTaggingGaps }
 )
 
 $maxMetric = ($securityMetrics.Value | Measure-Object -Maximum).Maximum
@@ -1056,7 +1181,8 @@ $topSubs = $subStats | ForEach-Object {
               $_.VmHdd + $_.VmUnmanaged + $_.VmHighCpu +
               $_.SubnetsNoNsg + $_.NicsNoNsg + $_.NsgOpenMgmtRules +
               $_.KeyVaultsNoPurge + $_.KvSecretsExpiring60 +
-              $_.ActivityLogNoDiag
+              $_.ActivityLogNoDiag +
+              $_.DefenderFree + $_.VmStopped + $_.TaggingGaps
 
     [pscustomobject]@{
         Name   = $_.Name
@@ -1077,6 +1203,9 @@ $categoryBreakdown = @(
     [pscustomobject]@{ Category = 'Network';     Count = $totalSubnetsNoNsg + $totalNicsNoNsg + $totalNsgOpenRules }
     [pscustomobject]@{ Category = 'KeyVault';    Count = $totalKvNoPurge + $totalKvExpiring60 }
     [pscustomobject]@{ Category = 'ActivityLog'; Count = $totalActivityLogNoDiag }
+    [pscustomobject]@{ Category = 'Defender';    Count = ($defenderResults | Where-Object { $_.IsRisk } | Measure-Object).Count }
+    [pscustomobject]@{ Category = 'StoppedVMs';  Count = $totalVmStopped }
+    [pscustomobject]@{ Category = 'Tagging';     Count = $totalTaggingGaps }
 ) | Where-Object { $_.Count -gt 0 }
 
 $categoryJson = ($categoryBreakdown | ConvertTo-Json -Compress) -replace '</script>', '<\/script>'
@@ -1093,6 +1222,9 @@ $heatMapRows = foreach ($s in $subStats) {
         ActivityLog  = [int]$s.ActivityLogNoDiag
         SQL          = [int]$s.SqlInstances
         Policy       = [int]$s.PolicyAssignments
+        Defender     = [int]$s.DefenderFree
+        StoppedVMs   = [int]$s.VmStopped
+        Tagging      = [int]$s.TaggingGaps
     }
 }
 
@@ -1479,6 +1611,9 @@ $header = @"
     <li><strong>Activity Log</strong> - Whether subscription Activity Log diagnostics are configured (any destination).</li>
     <li><strong>SQL</strong> - Inventory of SQL instances (Azure SQL logical servers, Managed Instances, SQL on Azure VMs).</li>
     <li><strong>Azure Policy</strong> - Inventory of Policy assignments at subscription scope.</li>
+    <li><strong>Defender for Cloud</strong> - Defender plan coverage per subscription (Standard vs Free). Free tier means the workload is not actively monitored by Defender.</li>
+    <li><strong>Stopped VMs</strong> - Virtual Machines in OS-stopped state (not deallocated). These still incur compute charges.</li>
+    <li><strong>Resource Tagging</strong> - Resource groups and VMs with no tags (or missing required tags if -RequiredTags is specified).</li>
   </ul>
 </div>
 "@)
@@ -1603,6 +1738,10 @@ foreach ($sub in $subscriptions) {
     $sqlSub        = $sqlInstanceResults      | Where-Object { $_.SubscriptionId -eq $sid }
     $policySub     = $policyAssignmentResults | Where-Object { $_.SubscriptionId -eq $sid }
 
+    $defenderSub      = $defenderResults   | Where-Object { $_.SubscriptionId -eq $sid }
+    $vmStoppedSub2    = $vmStoppedResults  | Where-Object { $_.SubscriptionId -eq $sid }
+    $taggingGapSub    = $taggingGapResults | Where-Object { $_.SubscriptionId -eq $sid }
+
     $stats         = $subStats | Where-Object { $_.Id -eq $sid }
 
     $rgWithoutLocks   = $stats.RgBad
@@ -1636,6 +1775,10 @@ foreach ($sub in $subscriptions) {
     $vmCpuSubDisplay = $vmCpuSub | Select-Object `
         SubscriptionId, SubscriptionName, ResourceGroup, VMName, Location, CpuAvg7d, CpuP95_7d, CpuMaxSample7d, Threshold, IsRisk
 
+    $defenderSubDisplay    = $defenderSub   | Select-Object SubscriptionId, SubscriptionName, PlanName, Tier, IsRisk
+    $vmStoppedSubDisplay   = $vmStoppedSub2 | Select-Object SubscriptionId, SubscriptionName, ResourceGroup, VMName, Location, PowerState
+    $taggingGapSubDisplay  = $taggingGapSub | Select-Object SubscriptionId, SubscriptionName, ResourceType, ResourceGroup, ResourceName, Location, MissingTags
+
     $sidSafe = SafeHtmlId -Id $sid
 
     $govHtml        = New-TableHtml -Data $govSub             -Id "gov-$sidSafe"      -Title "Governance - Resource group locks"
@@ -1655,9 +1798,19 @@ foreach ($sub in $subscriptions) {
     $sqlHtml        = New-TableHtml -Data $sqlSubDisplay      -Id "sql-$sidSafe"      -Title "SQL - instances inventory (Azure SQL / MI / SQL on VM)"
     $policyHtml     = New-TableHtml -Data $policySubDisplay   -Id "pol-$sidSafe"      -Title "Azure Policy - assignments (subscription scope)"
 
+    $defenderHtml     = New-TableHtml -Data $defenderSubDisplay   -Id "def-$sidSafe"    -Title "Defender for Cloud - plan coverage"
+    $vmStoppedHtml    = New-TableHtml -Data $vmStoppedSubDisplay  -Id "vstop-$sidSafe"  -Title "Compute - VMs in stopped state (not deallocated)"
+    $taggingGapHtml   = New-TableHtml -Data $taggingGapSubDisplay -Id "tag-$sidSafe"    -Title "Tagging gaps - resource groups and VMs"
+
     # ---- v1.0.6+ UI note: metrics disclaimer under CPU table ----
     $cpuNote = "Note: CPU metrics may be missing for some VMs if Azure Monitor metrics are not available/disabled, the VM was recently created, the VM was deallocated for long periods, or you don't have permission to read metrics. Missing metrics are not treated as a failure by this report."
     $vmCpuHtml = $vmCpuHtml + (New-NoteHtml -Text $cpuNote)
+
+    $stoppedNote = "Note: 'VM stopped' means the OS was shut down but the VM was not deallocated. Azure still charges for compute in this state. Deallocated VMs are not listed here."
+    $vmStoppedHtml = $vmStoppedHtml + (New-NoteHtml -Text $stoppedNote)
+
+    $taggingNote = "Note: Only resource groups and virtual machines are checked for tagging gaps. Use -RequiredTags to specify required tag names; if omitted, resources with no tags at all are reported."
+    $taggingGapHtml = $taggingGapHtml + (New-NoteHtml -Text $taggingNote)
 
     $issueFlag = if ($hasIssue) { 1 } else { 0 }
 
@@ -1690,6 +1843,9 @@ foreach ($sub in $subscriptions) {
     [void]$htmlSb.AppendLine($actLogHtml)
     [void]$htmlSb.AppendLine($sqlHtml)
     [void]$htmlSb.AppendLine($policyHtml)
+    [void]$htmlSb.AppendLine($defenderHtml)
+    [void]$htmlSb.AppendLine($vmStoppedHtml)
+    [void]$htmlSb.AppendLine($taggingGapHtml)
 
     [void]$htmlSb.AppendLine("</div>")
 }
