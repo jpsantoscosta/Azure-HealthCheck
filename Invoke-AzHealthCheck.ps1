@@ -45,15 +45,6 @@
 .SYNOPSIS
     Generates an Azure Health Check HTML report across all subscriptions in the current context.
 
-.DESCRIPTION
-    Invoke-AzHealthCheck scans every Azure subscription available in the current login context and
-    produces a single self-contained HTML dashboard covering: governance (RG locks), backup coverage,
-    compute hygiene (legacy disks, high CPU, stopped VMs), storage risks (TLS, public access, soft delete),
-    network security (NSG gaps, exposed RDP/SSH), Key Vault configuration and expiry, Activity Log
-    diagnostics, SQL inventory, Azure Policy assignments, Defender for Cloud plan coverage, resource
-    tagging gaps, public-facing resources (App Services, Storage, SQL with public network access enabled),
-    and privileged identity (permanent Owner/Contributor assignments for users/groups without PIM).
-
 .PARAMETER OpenAfterExport
     Automatically opens the generated HTML report in the default browser after export.
 
