@@ -30,6 +30,7 @@ It analyses common governance gaps, security misconfigurations, compute/storage/
 - Blob public access enabled
 - Soft delete status (Blob / File)
 - Replication tier (GRS, ZRS, etc.)
+- **Public network access** — Storage Accounts with no network firewall (DefaultAction: Allow)
 
 ### **✔ Network**
 - Subnets without NSG
@@ -61,6 +62,17 @@ It analyses common governance gaps, security misconfigurations, compute/storage/
 ### **✔ Resource Tagging**
 - Resource groups and VMs with no tags
 - Or missing required tags if `-RequiredTags` is specified
+
+### **✔ Public-facing Resources**
+- **App Services** with `PublicNetworkAccess` not explicitly set to `Disabled`
+- **Storage Accounts** with no network firewall (`DefaultAction: Allow`)
+- **SQL logical servers** with `publicNetworkAccess` not set to `Disabled`
+- **SQL Managed Instances** with `publicDataEndpointEnabled` set to `true`
+
+### **✔ Privileged Identity**
+- Permanent `Owner` and `Contributor` role assignments for **users and groups** (i.e. not service principals or managed identities)
+- These direct permanent assignments should be replaced with PIM-eligible assignments to enforce just-in-time access
+- Note: PIM-eligible (not yet activated) assignments are not returned by the Azure RBAC API and are therefore not listed
 
 ---
 
@@ -116,18 +128,17 @@ The script is read-only and does not modify any resources.
 
 | Component | Required Role |
 |-----------|--------------|
-| Resources (VMs, RGs, storage, network, etc.) | Reader |
+| Resources (VMs, RGs, storage, network, App Services, etc.) | Reader |
 | Key Vault expiry metadata | Key Vault Secrets User (or custom: `secrets/read`, `keys/read`, `certificates/read`) |
 | Recovery Services Vault (backup items) | Reader (or Backup Reader in restricted tenants) |
 | CPU metrics | Monitoring Reader (or `Microsoft.Insights/metrics/read`) |
+| Role assignments (Privileged Identity check) | Reader (includes `Microsoft.Authorization/roleAssignments/read`) |
 
 ---
 
 ## 📝 Roadmap
 
 ### 🔒 Security
-- Public-facing resources — App Services, Storage, SQL with public network access enabled
-- Privileged Identity — permanent Owner/Contributor assignments without PIM
 - Managed Identity gaps — VMs/App Services still using service principal passwords
 - Entra ID guest users — subscriptions with high numbers of guests with elevated roles
 
