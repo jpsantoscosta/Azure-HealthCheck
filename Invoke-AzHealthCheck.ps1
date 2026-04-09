@@ -229,7 +229,7 @@ if (-not $ctx) {
 # Pre-import Az.Network with -DisableNameChecking to suppress unapproved-verb warnings
 Import-Module Az.Network -DisableNameChecking -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
 
-# Get all subs scoped to the authenticated tenant — prevents token errors for other tenants
+# Get all subs scoped to the authenticated tenant -- prevents token errors for other tenants
 $tenantId = $ctx.Tenant.Id
 $subscriptions = Get-AzSubscription -TenantId $tenantId -WarningAction SilentlyContinue |
     Where-Object { $_.State -in @('Enabled', 'Warned') } |
